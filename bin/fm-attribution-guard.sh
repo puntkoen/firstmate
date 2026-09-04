@@ -17,15 +17,17 @@
 #   pre-push     re-checks every outgoing commit, which is what catches a
 #                message that reached history through --no-verify, a rebase, a
 #                cherry-pick, or plumbing
-# bin/git-hooks/{commit-msg,pre-commit,pre-push} are symlinks to this file and
-# the hook name comes from $0, so one file owns all three. bin/fm-spawn.sh
-# points each task copy's shell at that directory through GIT_CONFIG_*, so an
-# ordinary `git commit` is checked without writing anything into the project's
-# own .git.
+# bin/git-hooks/ holds a symlink to this file per hook name and the hook name
+# comes from $0, so one file owns them all. bin/fm-spawn.sh points each task
+# copy's shell at that directory through GIT_CONFIG_*, so an ordinary
+# `git commit` is checked without writing anything into the project's own .git.
 #
-# After its own verdict each hook chains to the repository's real hook of the
-# same name when one exists, so a project keeping its own hooks does not lose
-# them.
+# core.hooksPath REPLACES the repository's hook directory, so every hook name
+# git documents has a symlink here. The three checked names run their own
+# verdict and then chain to the repository's real hook of that name; every other
+# name is a pass-through that only chains, preserving the arguments, standard
+# input, and exit status, and exits 0 when the project has no such hook. A
+# project keeping husky, git-lfs, or its own hooks therefore does not lose them.
 #
 # Usage:
 #   fm-attribution-guard.sh check-message <file>    check one commit message file
@@ -51,6 +53,11 @@
 #     --cleanup=verbatim is refused there.
 #   - The pre-push pass checks at most 1000 outgoing commits per ref, newest
 #     first, and says on stderr when a push exceeds that.
+#   - push-to-checkout, proc-receive, and fsmonitor-watchman have no
+#     pass-through, because git's behaviour when one of them is absent is not
+#     the same as a hook that exits 0, so a pass-through would silently change
+#     what the repository does. A project owning one of those three loses it for
+#     the life of the task copy.
 set -eu
 shopt -s nocasematch
 
@@ -63,8 +70,8 @@ usage: fm-attribution-guard.sh check-message <file>
        fm-attribution-guard.sh check-commits <rev>...
        fm-attribution-guard.sh hooks-dir
        fm-attribution-guard.sh export-env
-Also runs as the commit-msg, pre-commit, and pre-push hooks through the
-symlinks in bin/git-hooks/. Read this script's header for the full contract.
+Also runs as every git hook through the symlinks in bin/git-hooks/. Read this
+script's header for the full contract.
 EOF
 }
 
@@ -101,6 +108,7 @@ CREDIT_RE='(^|[^[:alnum:]])(generated|created|authored|written|built|assisted) (
 BASE_REF=
 
 path_is_tracked() {  # <path>
+  local path=$1
   [ -n "$BASE_REF" ] || return 1
   git cat-file -e "$BASE_REF:$path" 2>/dev/null
 }
@@ -210,8 +218,12 @@ check_staged() {
 
 # --- whole-commit check (pre-push) ------------------------------------------
 
+# A merge commit needs the combined diff: plain diff-tree prints nothing for a
+# commit with more than one parent, so a path the merge itself introduces would
+# go unseen. A path arriving unchanged from one parent needs no special handling
+# because that parent is separately in the outgoing range.
 check_commits() {  # <rev>...
-  local rev short message
+  local rev short message scope
   for rev in "$@"; do
     short=$(git log -1 --format=%h "$rev")
     message=$(git log -1 --format=%B "$rev")
@@ -222,7 +234,12 @@ check_commits() {  # <rev>...
       refuse "an outgoing commit carries agent attribution"
     }
     REASONS=()
-    scan_paths < <(git diff-tree --root --no-commit-id --name-only -r --diff-filter=ACMR -z "$rev") || {
+    if [ "$(git log -1 --format=%P "$rev" | wc -w)" -gt 1 ]; then
+      scope=-c
+    else
+      scope=--root
+    fi
+    scan_paths < <(git diff-tree "$scope" --no-commit-id --name-only -r --diff-filter=ACMR -z "$rev") || {
       REASONS=("commit $short:" ${REASONS[@]+"${REASONS[@]}"})
       refuse "an outgoing commit adds agent files"
     }
@@ -266,6 +283,19 @@ original_hooks_dir() {
       ;;
   esac
   printf '%s\n' "$value/hooks"
+}
+
+# Every other hook name git's own githooks documentation lists, so a project's
+# hooks keep running under core.hooksPath. See Known limits for the three names
+# deliberately absent from this set.
+PASS_THROUGH_HOOKS='applypatch-msg pre-applypatch post-applypatch pre-merge-commit prepare-commit-msg post-commit pre-rebase post-checkout post-merge pre-receive update post-receive post-update reference-transaction pre-auto-gc post-rewrite sendemail-validate p4-changelist p4-prepare-changelist p4-post-changelist p4-pre-submit post-index-change'
+
+is_pass_through_hook() {  # <name>
+  local name
+  for name in $PASS_THROUGH_HOOKS; do
+    [ "$name" = "$1" ] && return 0
+  done
+  return 1
 }
 
 chain_original_hook() {  # <hook-name> <arg>...
@@ -332,6 +362,12 @@ case "$SELF_NAME" in
     run_pre_push "${1:-origin}" <<< "$PUSH_INPUT"
     chain_original_hook pre-push "$@" <<< "$PUSH_INPUT"
     exit 0
+    ;;
+  *)
+    if is_pass_through_hook "$SELF_NAME"; then
+      chain_original_hook "$SELF_NAME" "$@" || exit $?
+      exit 0
+    fi
     ;;
 esac
 

@@ -289,6 +289,71 @@ test_ordinary_vendor_wording_is_accepted() {
   pass "fm-attribution-guard: ordinary wording naming a model vendor still commits"
 }
 
+# git prints nothing for a merge commit's own tree without a combined diff, so a
+# merge that introduces the file itself used to sail past the path scan.
+test_evil_merge_adding_claude_md_is_refused_at_push() {
+  local repo remote out
+  repo=$(new_repo evil-merge)
+  remote="$TMP_ROOT/evil-merge.git"
+  git init -q --bare "$remote"
+  git -C "$repo" remote add origin "$remote"
+  unarmed_git -C "$repo" push -q origin HEAD:refs/heads/main || fail "seed push failed"
+  unarmed_git -C "$repo" checkout -qb side
+  printf 'side\n' > "$repo/side.txt"
+  unarmed_git -C "$repo" add side.txt
+  unarmed_git -C "$repo" commit -qm "feat: side work"
+  unarmed_git -C "$repo" checkout -q main
+  printf 'main\n' > "$repo/main.txt"
+  unarmed_git -C "$repo" add main.txt
+  unarmed_git -C "$repo" commit -qm "feat: main work"
+  unarmed_git -C "$repo" merge --no-commit --no-ff side >/dev/null 2>&1
+  printf '@AGENTS.md\n' > "$repo/CLAUDE.md"
+  unarmed_git -C "$repo" add -f CLAUDE.md
+  unarmed_git -C "$repo" commit -qm "chore: merge side" ||
+    fail "the evil merge did not commit, so the push case cannot be exercised"
+  [ "$(git -C "$repo" log -1 --format=%P | wc -w)" -eq 2 ] || fail "the fixture is not a merge commit"
+  out=$(git -C "$repo" push origin HEAD:refs/heads/main 2>&1) &&
+    fail "pushing a merge that introduces CLAUDE.md in its own tree was accepted"
+  assert_contains "$out" "CLAUDE.md" "the push refusal did not name the offending path"
+  [ "$(git -C "$remote" log -1 --format=%s refs/heads/main)" = "seed" ] ||
+    fail "the evil merge reached the remote"
+  pass "fm-attribution-guard: an evil merge adding CLAUDE.md is refused at push"
+}
+
+# core.hooksPath replaces the repository's hook directory outright, so a hook
+# name the guard does not check must still reach the project's own hook.
+test_project_pass_through_hooks_still_run() {
+  local repo hooks out
+  repo=$(new_repo pass-through)
+  hooks="$repo/.git/hooks"
+  mkdir -p "$hooks"
+  cat > "$hooks/post-commit" <<SH
+#!/usr/bin/env bash
+printf 'post-commit ran\n' > "$repo/post-commit.marker"
+SH
+  cat > "$hooks/prepare-commit-msg" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$1" > "$repo/prepare.marker"
+grep -q "^allow" "\$1" || { echo "project hook: subject not allowed" >&2; exit 1; }
+SH
+  chmod +x "$hooks/post-commit" "$hooks/prepare-commit-msg"
+
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  out=$(git -C "$repo" commit -m "denied: bad subject" 2>&1) &&
+    fail "the project's prepare-commit-msg hook did not abort the commit"
+  assert_contains "$out" "project hook: subject not allowed" \
+    "the project's prepare-commit-msg hook did not run"
+  [ ! -e "$repo/post-commit.marker" ] || fail "post-commit ran for an aborted commit"
+
+  git -C "$repo" commit -qm "allow: good subject" || fail "an allowed commit was refused"
+  assert_present "$repo/prepare.marker" "prepare-commit-msg left no evidence it ran"
+  assert_present "$repo/post-commit.marker" "the project's post-commit hook did not run"
+  grep -q 'COMMIT_EDITMSG$' "$repo/prepare.marker" ||
+    fail "prepare-commit-msg did not receive git's own message-file argument: $(cat "$repo/prepare.marker")"
+  pass "fm-attribution-guard: a project's unchecked hooks still run"
+}
+
 test_clean_push_is_accepted() {
   local repo remote
   repo=$(new_repo clean-push)
@@ -337,5 +402,7 @@ test_no_verify_commit_is_caught_at_push
 test_verbatim_commented_trailer_is_caught_at_push
 test_tracked_agent_path_stays_maintainable
 test_ordinary_vendor_wording_is_accepted
+test_evil_merge_adding_claude_md_is_refused_at_push
+test_project_pass_through_hooks_still_run
 test_clean_push_is_accepted
 test_unarmed_repo_is_not_enforced

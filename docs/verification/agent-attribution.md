@@ -71,6 +71,8 @@ ok - fm-attribution-guard: a --no-verify commit is still refused at push
 ok - fm-attribution-guard: a trailer hidden in a comment is refused at push
 ok - fm-attribution-guard: an already-tracked agent path stays maintainable
 ok - fm-attribution-guard: ordinary wording naming a model vendor still commits
+ok - fm-attribution-guard: an evil merge adding CLAUDE.md is refused at push
+ok - fm-attribution-guard: a project's unchecked hooks still run
 ok - fm-attribution-guard: a clean branch still pushes
 ok - fm-attribution-guard: enforcement comes from the arming, not from the repository
 ```

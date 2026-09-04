@@ -33,6 +33,11 @@ case "${1:-}" in
   list-windows) exit 0 ;;
   has-session|new-session|new-window|kill-window|set-window-option) exit 0 ;;
   send-keys)
+    if [ -n "${FM_FAKE_SEND_FAIL_MATCH:-}" ]; then
+      case "$*" in
+        *"$FM_FAKE_SEND_FAIL_MATCH"*) exit 1 ;;
+      esac
+    fi
     if [ -n "${FM_FAKE_LAUNCH_LOG:-}" ]; then
       shift
       skip_next=
@@ -120,6 +125,30 @@ test_arming_is_harness_independent() {
   pass "fm-spawn: every harness gets the same arming"
 }
 
+# The arming is the only thing that makes layer two reach the worker, so a send
+# that never lands must stop the launch rather than produce an unguarded worker.
+test_spawn_refuses_when_the_arming_cannot_be_delivered() {
+  local rec id log out rc=0
+  id=attr-undeliverable-c1
+  rec=$(make_case arming-undeliverable "$id" codex)
+  read_case "$rec"
+  log="$TMP_ROOT/arming-undeliverable/launch.log"
+  : > "$log"
+
+  out=$(FM_FAKE_LAUNCH_LOG="$log" FM_FAKE_SEND_FAIL_MATCH='GIT_CONFIG_KEY_0=core.hooksPath' \
+    fm_test_run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN" \
+    "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "the spawn launched a worker although the arming never reached the pane"
+  assert_contains "$out" "refusing to launch a worker that could sign the captain's history" \
+    "the refusal did not name why the launch was refused"
+  grep -q 'core.hooksPath' "$log" && fail "the failed arming was recorded as delivered"
+  case "$(tail -n 1 "$log")" in
+    "export GOTMPDIR="*) ;;
+    *) fail "the spawn kept sending after the arming failed: $(tail -n 1 "$log")" ;;
+  esac
+  pass "fm-spawn: an undeliverable arming refuses the launch"
+}
+
 test_claude_spawn_suppresses_its_own_byline() {
   local rec id out settings
   id=attr-claude-b1
@@ -147,4 +176,5 @@ PY
 
 test_spawn_arms_the_guard_before_launch
 test_arming_is_harness_independent
+test_spawn_refuses_when_the_arming_cannot_be_delivered
 test_claude_spawn_suppresses_its_own_byline

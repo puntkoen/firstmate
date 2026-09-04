@@ -484,19 +484,45 @@ test_git_project_unignorable_pointer_is_refused() {
 # git check-ignore consults the index, so a tracked CLAUDE.md can never be made
 # ignorable. This is the shape a project is left in by `git rm` on the file.
 test_git_project_tracked_pointer_is_refused() {
-  local repo out rc=0
+  local repo out rc=0 before after
   repo=$(new_git_project git-tracked-pointer)
   printf '# project memory\n' > "$repo/AGENTS.md"
   printf '@AGENTS.md\n' > "$repo/CLAUDE.md"
   git -C "$repo" add AGENTS.md CLAUDE.md
   git -C "$repo" commit -qm seed || fail "fixture commit failed"
   rm -- "$repo/CLAUDE.md"
+  before=$(git -C "$repo" status --porcelain)
   out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) || rc=$?
+  after=$(git -C "$repo" status --porcelain)
   [ "$rc" -ne 0 ] || fail "the pointer was written into a repo that tracks CLAUDE.md"
   assert_contains "$out" "tracked" "refusal did not name tracking as the problem"
   assert_contains "$out" "git rm --cached" "refusal did not name a remedy that can work"
   assert_absent "$repo/CLAUDE.md" "a tracked, committable CLAUDE.md was written back"
+  [ "$before" = "$after" ] || fail "the refused run changed the repository: $after"
   pass "fm-ensure-agents-md.sh: refuses the pointer when CLAUDE.md is tracked"
+}
+
+# The shape this whole boundary exists for: a project that committed a real
+# CLAUDE.md. The refusal must fire before the promote path moves that file, so
+# the repository is left exactly as it was found.
+test_git_project_tracked_non_pointer_claude_is_refused_intact() {
+  local repo out rc=0 status_after
+  repo=$(new_git_project git-tracked-real-claude)
+  printf '# Project memory\n\nRun tests with make test.\n' > "$repo/CLAUDE.md"
+  git -C "$repo" add CLAUDE.md
+  git -C "$repo" commit -qm seed || fail "fixture commit failed"
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) || rc=$?
+  status_after=$(git -C "$repo" status --porcelain)
+  [ "$rc" -ne 0 ] || fail "a repo with a committed CLAUDE.md was silently promoted"
+  assert_contains "$out" "tracked" "refusal did not name tracking as the problem"
+  [ -z "$status_after" ] || fail "the refused run left a half-applied state: $status_after"
+  assert_absent "$repo/AGENTS.md" "the refused run created AGENTS.md"
+  cmp -s "$repo/CLAUDE.md" - <<'EOF' || fail "the committed CLAUDE.md was modified by a refused run"
+# Project memory
+
+Run tests with make test.
+EOF
+  pass "fm-ensure-agents-md.sh: a committed CLAUDE.md is refused with nothing changed"
 }
 
 
@@ -523,3 +549,4 @@ test_git_project_ignore_entry_is_idempotent
 test_git_project_existing_gitignore_is_respected
 test_git_project_unignorable_pointer_is_refused
 test_git_project_tracked_pointer_is_refused
+test_git_project_tracked_non_pointer_claude_is_refused_intact

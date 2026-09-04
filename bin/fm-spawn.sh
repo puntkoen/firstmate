@@ -3829,7 +3829,10 @@ if ! ATTRIBUTION_GUARD_ENV=$("$FM_ROOT/bin/fm-attribution-guard.sh" export-env);
   echo "error: could not resolve the attribution guard's hook directory; refusing to launch a worker that could sign the captain's history" >&2
   exit 1
 fi
-spawn_send_text_line "$T" "$ATTRIBUTION_GUARD_ENV"
+if ! spawn_send_text_line "$T" "$ATTRIBUTION_GUARD_ENV"; then
+  echo "error: could not deliver the attribution guard arming to $W's pane; refusing to launch a worker that could sign the captain's history" >&2
+  exit 1
+fi
 # Send through the exact channel that already ships GOTMPDIR, so every backend
 # and harness - ship, scout, and secondmate - gets it before launch. Skipped
 # entirely when trace context is off.

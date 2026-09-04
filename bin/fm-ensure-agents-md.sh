@@ -23,8 +23,10 @@
 # work tree the pointer is therefore never written until the repo actually
 # ignores it: the local .git/info/exclude entry is added first and the result is
 # verified with git check-ignore, and a pointer that cannot be made ignorable is
-# refused rather than left where a commit can pick it up. AGENTS.md is written
-# either way - that name credits no vendor and is meant to be committed.
+# refused rather than left where a commit can pick it up. That refusal is
+# resolved before anything is written, so a refused run leaves the working tree
+# and the index untouched. AGENTS.md is written either way - that name credits
+# no vendor and is meant to be committed.
 # bin/fm-attribution-guard.sh is the commit-time backstop for the same boundary.
 # Refuses a case-variant real memory file such as a lowercase agents.md, so the
 # pointer's @AGENTS.md import resolves to a real AGENTS.md on a case-sensitive
@@ -191,6 +193,29 @@ ensure_claude_ignored() {
   return 1
 }
 
+# Owns the refusal wording for a pointer that cannot be kept out of a commit.
+# Every branch below that is about to write calls this BEFORE its first mutation,
+# so a refusal leaves the working tree and the index exactly as they were found
+# rather than half-applied. install_claude_pointer calls it again, which is free
+# because the check is idempotent.
+require_claude_pointer_writable() {
+  if is_canonical_claude_pointer; then
+    return 0
+  fi
+  local ignore_rc=0
+  ensure_claude_ignored || ignore_rc=$?
+  case "$ignore_rc" in
+    0) return 0 ;;
+    2)
+      echo "error: CLAUDE.md is tracked in this repo ($DIR), so no ignore rule can keep the pointer out of a commit; stop tracking it with git rm --cached CLAUDE.md first (AGENTS.md is unaffected)" >&2
+      ;;
+    *)
+      echo "error: git will not ignore CLAUDE.md in $DIR, so writing the pointer would leave a committable agent file; add CLAUDE.md to this repo's ignore rules (AGENTS.md is unaffected)" >&2
+      ;;
+  esac
+  exit 1
+}
+
 # Write the canonical pointer as a regular file. Unlink a symlink first so the
 # write cannot follow it and destroy AGENTS.md. Never overwrite a distinct real
 # file; callers classify that as a conflict before invoking this.
@@ -198,19 +223,7 @@ install_claude_pointer() {
   if is_canonical_claude_pointer; then
     return 0
   fi
-  local ignore_rc=0
-  ensure_claude_ignored || ignore_rc=$?
-  case "$ignore_rc" in
-    0) ;;
-    2)
-      echo "error: CLAUDE.md is tracked in this repo ($DIR), so no ignore rule can keep the pointer out of a commit; stop tracking it with git rm --cached CLAUDE.md first (AGENTS.md is unaffected)" >&2
-      exit 1
-      ;;
-    *)
-      echo "error: git will not ignore CLAUDE.md in $DIR, so writing the pointer would leave a committable agent file; add CLAUDE.md to this repo's ignore rules (AGENTS.md is unaffected)" >&2
-      exit 1
-      ;;
-  esac
+  require_claude_pointer_writable
   if [ -L "$CLAUDE" ]; then
     rm -- "$CLAUDE"
   elif [ -e "$CLAUDE" ]; then
@@ -271,6 +284,7 @@ fi
 if [ -e "$AGENTS" ]; then
   if [ -L "$CLAUDE" ]; then
     if is_correct_claude_symlink; then
+      require_claude_pointer_writable
       ensure_maintenance_section
       install_claude_pointer
       if [ "$MAINT_INJECTED" -eq 1 ]; then
@@ -284,6 +298,7 @@ if [ -e "$AGENTS" ]; then
     exit 1
   fi
   if [ ! -e "$CLAUDE" ]; then
+    require_claude_pointer_writable
     ensure_maintenance_section
     install_claude_pointer
     if [ "$MAINT_INJECTED" -eq 1 ]; then
@@ -312,6 +327,7 @@ fi
 
 if [ -L "$CLAUDE" ]; then
   if is_correct_claude_symlink; then
+    require_claude_pointer_writable
     write_skeleton
     install_claude_pointer
     echo "created: AGENTS.md and wrote CLAUDE.md @AGENTS.md pointer in $DIR"
@@ -328,6 +344,7 @@ if [ -e "$CLAUDE" ]; then
       echo "created: AGENTS.md and kept CLAUDE.md @AGENTS.md pointer in $DIR"
       exit 0
     fi
+    require_claude_pointer_writable
     mv "$CLAUDE" "$AGENTS"
     ensure_maintenance_section
     install_claude_pointer
@@ -338,6 +355,7 @@ if [ -e "$CLAUDE" ]; then
   exit 1
 fi
 
+require_claude_pointer_writable
 write_skeleton
 install_claude_pointer
 echo "created: AGENTS.md and CLAUDE.md @AGENTS.md pointer in $DIR"
