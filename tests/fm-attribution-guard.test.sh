@@ -488,8 +488,6 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>" ||
   pass "fm-attribution-guard: a push by path still refuses a commit it adds"
 }
 
-# Arming core.hooksPath at a directory git finds no hooks in would leave the
-# worker silently unguarded, so resolving the arming must fail instead.
 # git's pre-push input carries the object name the ref has ON THE REMOTE, which
 # a diverged or never-fetched repository need not have in its own object store.
 # `git rev-list <that sha>..<local>` then dies, and swallowing that would leave
@@ -528,11 +526,13 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>" ||
   pass "fm-attribution-guard: a push whose remote sha is missing locally is still scanned"
 }
 
+# Arming core.hooksPath at a directory git finds no hooks in would leave the
+# worker silently unguarded, so resolving the arming must fail instead.
 test_export_env_refuses_a_hooks_dir_without_the_checked_hooks() {
   local stage out rc=0
   stage="$TMP_ROOT/bare-hooks/bin"
   mkdir -p "$stage/git-hooks"
-  cp "$ROOT/bin/fm-attribution-guard.sh" "$stage/fm-attribution-guard.sh"
+  cp "$ROOT/bin/fm-attribution-guard.sh" "$ROOT/bin/fm-git-tracked-lib.sh" "$stage/"
   chmod +x "$stage/fm-attribution-guard.sh"
   out=$("$stage/fm-attribution-guard.sh" export-env 2>&1) || rc=$?
   [ "$rc" -ne 0 ] || fail "export-env printed an arming line for a directory with no hooks: $out"

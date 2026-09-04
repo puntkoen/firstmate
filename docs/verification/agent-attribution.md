@@ -87,7 +87,8 @@ ok - fm-attribution-guard: enforcement comes from the arming, not from the repos
 ```
 
 `tests/fm-spawn-attribution.test.sh` proves a real spawn delivers both layers, and `tests/fm-ensure-agents-md.test.sh` proves the `CLAUDE.md` pointer is never left committable.
-That includes a pointer an earlier run already wrote, which the script now brings under the ignore rule instead of reporting unchanged, and a pointer the repository already tracks, which no ignore rule can fix and which is therefore refused with nothing changed.
+That includes a pointer an earlier run already wrote, which the script now brings under the ignore rule instead of reporting unchanged.
+A pointer the repository already tracks is left exactly as it is, because that is the same already-tracked boundary the guard draws for the same file, and `bin/fm-git-tracked-lib.sh` is the one owner both scripts read it from.
 
 ## Arming, and what it deliberately does not touch
 

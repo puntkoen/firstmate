@@ -63,6 +63,16 @@ shopt -s nocasematch
 
 SELF_NAME=$(basename -- "$0")
 
+# git runs this through a symlink in bin/git-hooks, so the directory the shell
+# reports is that hook directory rather than bin itself; the library and the
+# hooks are resolved from one place for both spellings.
+GUARD_BIN_DIR=$(cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+case "$GUARD_BIN_DIR" in
+  */git-hooks) GUARD_BIN_DIR=${GUARD_BIN_DIR%/git-hooks} ;;
+esac
+# shellcheck source=bin/fm-git-tracked-lib.sh
+. "$GUARD_BIN_DIR/fm-git-tracked-lib.sh"
+
 usage() {
   cat <<'EOF'
 usage: fm-attribution-guard.sh check-message <file>
@@ -113,17 +123,12 @@ CREDIT_RE='(^|[^[:alnum:]])(generated|created|authored|written|built|assisted) (
 # A path the repository already tracks is not refused: a project that
 # deliberately committed one of these names may keep maintaining it, and a
 # name-based exemption for one such project would be forgotten the moment a
-# second one appears. Trackedness is judged against BASE_REF - HEAD for a
-# staged check, the commit's own first parent for an outgoing commit - so an
-# older commit is never judged against today's HEAD. An empty BASE_REF, which is
-# what an unborn branch and a root commit both produce, tracks nothing.
+# second one appears. bin/fm-git-tracked-lib.sh owns that test and
+# bin/fm-ensure-agents-md.sh draws its own boundary from the same function, so
+# the two halves cannot disagree about one file. Trackedness is judged against
+# BASE_REF - HEAD for a staged check, the commit's own first parent for an
+# outgoing commit - so an older commit is never judged against today's HEAD.
 BASE_REF=
-
-path_is_tracked() {  # <path>
-  local path=$1
-  [ -n "$BASE_REF" ] || return 1
-  git cat-file -e "$BASE_REF:$path" 2>/dev/null
-}
 
 agent_path_reason() {  # <path>; prints a reason and returns 0 when the path is refused
   local path=$1 base=${1##*/} problem=
@@ -135,7 +140,7 @@ agent_path_reason() {  # <path>; prints a reason and returns 0 when the path is 
     esac
   fi
   [ -n "$problem" ] || return 1
-  if path_is_tracked "$path"; then
+  if fm_git_path_tracked_at "$BASE_REF" "$path"; then
     return 1
   fi
   printf '%s\n' "$path $problem"
@@ -277,12 +282,7 @@ check_commits() {  # <rev>...
 # --- hook chaining ----------------------------------------------------------
 
 hooks_dir() {
-  local self_dir
-  self_dir=$(cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
-  case "$self_dir" in
-    */git-hooks) printf '%s\n' "$self_dir" ;;
-    *) printf '%s\n' "$self_dir/git-hooks" ;;
-  esac
+  printf '%s\n' "$GUARD_BIN_DIR/git-hooks"
 }
 
 # The repository's own hook directory, as git would have resolved it without

@@ -27,8 +27,10 @@
 # resolved before anything is written, so a refused run leaves the working tree
 # and the index untouched. A pointer an earlier run already wrote reaches the
 # same decision, since a run that only reports it unchanged would otherwise walk
-# past the committable file it was built to prevent. AGENTS.md is written either
-# way - that name credits no vendor and is meant to be committed.
+# past the committable file it was built to prevent; a pointer the repository
+# already tracks is left exactly as it is, which is the boundary
+# bin/fm-attribution-guard.sh draws for the same file. AGENTS.md is written
+# either way - that name credits no vendor and is meant to be committed.
 # bin/fm-attribution-guard.sh is the commit-time backstop for the same boundary.
 # Refuses a case-variant real memory file such as a lowercase agents.md, so the
 # pointer's @AGENTS.md import resolves to a real AGENTS.md on a case-sensitive
@@ -43,10 +45,13 @@ set -eu
 # Resolved before the cd below so a crewmate can invoke this by absolute path
 # from any worktree. bin/fm-git-exclude-lib.sh owns every write to the
 # repository's exclude file, including the locking that keeps a parallel spawn's
-# entry from being lost.
+# entry from being lost, and bin/fm-git-tracked-lib.sh owns the test for a path
+# the repository already carries on purpose.
 FM_ENSURE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 # shellcheck source=bin/fm-git-exclude-lib.sh
 . "$FM_ENSURE_DIR/fm-git-exclude-lib.sh"
+# shellcheck source=bin/fm-git-tracked-lib.sh
+. "$FM_ENSURE_DIR/fm-git-tracked-lib.sh"
 
 usage() {
   echo "usage: fm-ensure-agents-md.sh [repo-or-worktree-dir]" >&2
@@ -186,6 +191,20 @@ ensure_claude_ignored() {
   return 1
 }
 
+# The pointer this repository committed on purpose is not what this boundary is
+# for. bin/fm-attribution-guard.sh leaves such a path addable, modifiable, and
+# pushable for the same reason, and both scripts read that from the one function
+# in bin/fm-git-tracked-lib.sh, so a project that deliberately maintains its own
+# pointer - firstmate itself does - is never told to stop tracking it. The path
+# is named the way git names it, from the repository root, because this script
+# runs in any directory of the work tree.
+claude_pointer_is_tracked() {
+  local head prefix
+  head=$(git rev-parse --verify --quiet HEAD) || head=
+  prefix=$(git rev-parse --show-prefix 2>/dev/null) || prefix=
+  fm_git_path_tracked_at "$head" "${prefix}${CLAUDE}"
+}
+
 # Owns the refusal wording for a pointer that cannot be kept out of a commit, and
 # the single place the ignorability decision is reached.
 # Every branch below calls this BEFORE its first mutation, so a refusal leaves the
@@ -194,10 +213,16 @@ ensure_claude_ignored() {
 # write no pointer at all: a pointer an earlier run left behind is a real,
 # committable file in exactly the way a fresh one would be, and skipping the
 # decision there would leave the most common installation as exposed as it was
-# before this rule existed. install_claude_pointer calls it again, which is free
-# because the check is idempotent.
+# before this rule existed. A canonical pointer the repository already tracks is
+# the one shape that needs nothing, since no exclude entry can change what is
+# already committed and nothing here should undo a deliberate choice.
+# install_claude_pointer calls it again, which is free because the check is
+# idempotent.
 require_claude_pointer_writable() {
   local ignore_rc=0
+  if is_canonical_claude_pointer && claude_pointer_is_tracked; then
+    return 0
+  fi
   ensure_claude_ignored || ignore_rc=$?
   case "$ignore_rc" in
     0) return 0 ;;

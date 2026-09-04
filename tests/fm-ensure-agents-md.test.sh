@@ -507,10 +507,12 @@ test_git_project_kept_pointer_is_ignored() {
   pass "fm-ensure-agents-md.sh: a kept pointer is brought under the ignore rule"
 }
 
-# A tracked pointer is the shape no ignore rule can fix, so reporting it
-# unchanged would be reporting success over a committed agent file.
-test_git_project_tracked_canonical_pointer_is_refused() {
-  local repo out rc=0 status_after
+# A pointer the repository committed on purpose is the same boundary
+# bin/fm-attribution-guard.sh draws: what a project already tracks stays
+# maintainable. No exclude entry can change what is already committed, and this
+# is firstmate's own shape, so the run must succeed and touch nothing.
+test_git_project_tracked_canonical_pointer_is_kept() {
+  local repo out rc=0 status_after excl
   repo=$(new_git_project git-tracked-canonical)
   printf '# Existing agent memory\n\n## Maintaining this file\n\nKeep this file for knowledge useful to almost every future agent session in this project.\nDo not repeat what the codebase already shows; point to the authoritative file or command instead.\nPrefer rewriting or pruning existing entries over appending new ones.\nWhen updating this file, preserve this bar for all agents and keep entries concise.\n' > "$repo/AGENTS.md"
   write_fixture_claude_pointer "$repo"
@@ -518,15 +520,37 @@ test_git_project_tracked_canonical_pointer_is_refused() {
   cp "$repo/CLAUDE.md" "$repo/.claude-before"
   git -C "$repo" add AGENTS.md CLAUDE.md
   git -C "$repo" commit -qm seed || fail "fixture commit failed"
+  excl="$repo/.git/info/exclude"
   out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) || rc=$?
   status_after=$(git -C "$repo" status --porcelain -- AGENTS.md CLAUDE.md)
-  [ "$rc" -ne 0 ] || fail "a tracked CLAUDE.md pointer was reported as fine: $out"
-  assert_contains "$out" "tracked" "refusal did not name tracking as the problem"
-  assert_contains "$out" "git rm --cached" "refusal did not name a remedy that can work"
-  [ -z "$status_after" ] || fail "the refused run changed the repository: $status_after"
-  cmp -s "$repo/.agents-before" "$repo/AGENTS.md" || fail "the refused run modified AGENTS.md"
-  cmp -s "$repo/.claude-before" "$repo/CLAUDE.md" || fail "the refused run modified CLAUDE.md"
-  pass "fm-ensure-agents-md.sh: a tracked canonical pointer is refused with nothing changed"
+  [ "$rc" -eq 0 ] || fail "a deliberately tracked canonical pointer was refused: $out"
+  assert_contains "$out" "unchanged:" "a tracked canonical pointer was not reported unchanged"
+  case "$out" in
+    *"git rm --cached"*) fail "the run told a worker to stop tracking a deliberate pointer: $out" ;;
+  esac
+  [ -z "$status_after" ] || fail "the run changed the repository: $status_after"
+  cmp -s "$repo/.agents-before" "$repo/AGENTS.md" || fail "the run modified AGENTS.md"
+  cmp -s "$repo/.claude-before" "$repo/CLAUDE.md" || fail "the run modified CLAUDE.md"
+  grep -q 'CLAUDE.md' "$excl" 2>/dev/null &&
+    fail "an exclude entry was written for a path the repository already tracks"
+  pass "fm-ensure-agents-md.sh: a deliberately tracked canonical pointer is left alone"
+}
+
+# The same boundary on the branch that still has AGENTS.md to create.
+test_git_project_tracked_pointer_without_agents_md_is_kept() {
+  local repo out rc=0
+  repo=$(new_git_project git-tracked-canonical-bare)
+  write_fixture_claude_pointer "$repo"
+  git -C "$repo" add CLAUDE.md
+  git -C "$repo" commit -qm seed || fail "fixture commit failed"
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "a deliberately tracked pointer was refused when AGENTS.md was missing: $out"
+  assert_contains "$out" "created:" "the skeleton run did not report a creation"
+  assert_present "$repo/AGENTS.md" "AGENTS.md was not created beside the tracked pointer"
+  assert_claude_pointer "$repo/CLAUDE.md"
+  [ -z "$(git -C "$repo" status --porcelain -- CLAUDE.md)" ] ||
+    fail "the run modified the tracked pointer"
+  pass "fm-ensure-agents-md.sh: a tracked pointer still gets its AGENTS.md"
 }
 
 # A negation makes the path un-ignorable; the pointer must not be written at all,
@@ -640,7 +664,8 @@ test_git_project_ignore_entry_is_idempotent
 test_git_project_existing_gitignore_is_respected
 test_git_project_existing_pointer_is_ignored
 test_git_project_kept_pointer_is_ignored
-test_git_project_tracked_canonical_pointer_is_refused
+test_git_project_tracked_canonical_pointer_is_kept
+test_git_project_tracked_pointer_without_agents_md_is_kept
 test_git_project_unignorable_pointer_is_refused
 test_git_project_tracked_pointer_is_refused
 test_git_project_tracked_non_pointer_claude_is_refused_intact
