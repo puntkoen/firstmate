@@ -18,6 +18,14 @@
 # Owns the canonical CLAUDE.md pointer content (the exact two-line @AGENTS.md
 # form). A real-file pointer cannot follow a write into AGENTS.md, which is why
 # the installer never creates a CLAUDE.md symlink.
+# The pointer is a REAL file in the project tree, so it is committable, and a
+# repo whose ignore list happened not to name it has committed it. Inside a git
+# work tree the pointer is therefore never written until the repo actually
+# ignores it: the local .git/info/exclude entry is added first and the result is
+# verified with git check-ignore, and a pointer that cannot be made ignorable is
+# refused rather than left where a commit can pick it up. AGENTS.md is written
+# either way - that name credits no vendor and is meant to be committed.
+# bin/fm-attribution-guard.sh is the commit-time backstop for the same boundary.
 # Refuses a case-variant real memory file such as a lowercase agents.md, so the
 # pointer's @AGENTS.md import resolves to a real AGENTS.md on a case-sensitive
 # filesystem (issue #389). The real-file pointer also eliminates the old
@@ -128,12 +136,35 @@ is_canonical_claude_pointer() {
   claude_pointer_content | cmp -s - "$CLAUDE"
 }
 
+# Make git ignore CLAUDE.md in this directory before the pointer is written.
+# The entry goes in the repo-local exclude file rather than the tracked
+# .gitignore, so this never edits a file the project owns. Returns non-zero when
+# the path still is not ignored, which is the caller's cue to refuse the write.
+ensure_claude_ignored() {
+  local excl prefix entry
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  if git check-ignore -q "$CLAUDE" 2>/dev/null; then
+    return 0
+  fi
+  excl=$(git rev-parse --git-path info/exclude 2>/dev/null) || return 1
+  [ -n "$excl" ] || return 1
+  prefix=$(git rev-parse --show-prefix 2>/dev/null) || prefix=
+  entry="/${prefix}${CLAUDE}"
+  mkdir -p "$(dirname "$excl")" || return 1
+  grep -qxF "$entry" "$excl" 2>/dev/null || printf '%s\n' "$entry" >> "$excl" || return 1
+  git check-ignore -q "$CLAUDE" 2>/dev/null
+}
+
 # Write the canonical pointer as a regular file. Unlink a symlink first so the
 # write cannot follow it and destroy AGENTS.md. Never overwrite a distinct real
 # file; callers classify that as a conflict before invoking this.
 install_claude_pointer() {
   if is_canonical_claude_pointer; then
     return 0
+  fi
+  if ! ensure_claude_ignored; then
+    echo "error: git will not ignore CLAUDE.md in $DIR, so writing the pointer would leave a committable agent file; add CLAUDE.md to this repo's ignore rules (AGENTS.md is unaffected)" >&2
+    exit 1
   fi
   if [ -L "$CLAUDE" ]; then
     rm -- "$CLAUDE"

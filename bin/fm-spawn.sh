@@ -3199,8 +3199,16 @@ if [ "$KIND" != secondmate ]; then
       j_stop=$(json_escape "touch $(shell_quote "$TURNEND"); $busy_cmd_prefix idle $busy_suffix --event stop 2>/dev/null || true")
       j_stopfail=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event stop-failure 2>/dev/null || true")
       j_sessionend=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event session-end 2>/dev/null || true")
+      # attribution/includeCoAuthoredBy suppress claude's own commit and PR
+      # byline at the source, so the guard below is a backstop rather than the
+      # only thing standing between the captain and a signed commit. An empty
+      # commit/pr string hides the byline entirely and sessionUrl:false drops the
+      # session trailer; includeCoAuthoredBy is the deprecated spelling, kept for
+      # an older installed claude that predates the attribution object. Verified
+      # against the settings schema in claude 2.1.236
+      # (docs/verification/agent-attribution.md).
       cat > "$WT/.claude/settings.local.json" <<EOF
-{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"$j_submit"}]}],"Stop":[{"hooks":[{"type":"command","command":"$j_stop"}]}],"StopFailure":[{"hooks":[{"type":"command","command":"$j_stopfail"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"$j_sessionend"}]}]}}
+{"attribution":{"commit":"","pr":"","sessionUrl":false},"includeCoAuthoredBy":false,"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"$j_submit"}]}],"Stop":[{"hooks":[{"type":"command","command":"$j_stop"}]}],"StopFailure":[{"hooks":[{"type":"command","command":"$j_stopfail"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"$j_sessionend"}]}]}}
 EOF
       exclude_path '.claude/settings.local.json'
       ;;
@@ -3811,6 +3819,17 @@ spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
 if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   spawn_send_text_line "$T" "export FM_TASK_ID=$ID"
 fi
+
+# Arm the attribution guard for every git command the worker runs in this pane.
+# GIT_CONFIG_* is its own config scope, so the hooks reach an ordinary
+# `git commit` without writing anything into the project's shared .git - which
+# hard rule 1 forbids and which would follow the captain's own checkout around.
+# bin/fm-attribution-guard.sh owns the line, the hooks, and the residual gaps.
+if ! ATTRIBUTION_GUARD_ENV=$("$FM_ROOT/bin/fm-attribution-guard.sh" export-env); then
+  echo "error: could not resolve the attribution guard's hook directory; refusing to launch a worker that could sign the captain's history" >&2
+  exit 1
+fi
+spawn_send_text_line "$T" "$ATTRIBUTION_GUARD_ENV"
 # Send through the exact channel that already ships GOTMPDIR, so every backend
 # and harness - ship, scout, and secondmate - gets it before launch. Skipped
 # entirely when trace context is off.

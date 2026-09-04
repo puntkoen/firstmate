@@ -415,6 +415,68 @@ test_lowercase_agents_md_refuses_case_fragile_pointer() {
   pass "fm-ensure-agents-md.sh: refuses a case-variant lowercase agents.md (issue #389)"
 }
 
+# The CLAUDE.md pointer is a real, committable file. In a git work tree it may
+# never be left where an ordinary `git add -A` can pick it up.
+new_git_project() {  # <name>
+  local repo="$TMP_ROOT/$1"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email captain@example.com
+  git -C "$repo" config user.name Captain
+  printf '%s\n' "$repo"
+}
+
+test_git_project_pointer_is_ignored() {
+  local repo
+  repo=$(new_git_project git-ignored)
+  "$ROOT/bin/fm-ensure-agents-md.sh" "$repo" >/dev/null || fail "fm-ensure-agents-md.sh failed in a git project"
+  assert_claude_pointer "$repo/CLAUDE.md"
+  git -C "$repo" check-ignore -q CLAUDE.md || fail "CLAUDE.md is not ignored after the pointer was written"
+  git -C "$repo" add -A
+  git -C "$repo" diff --cached --name-only | grep -qx CLAUDE.md &&
+    fail "CLAUDE.md was staged by an ordinary git add -A"
+  git -C "$repo" diff --cached --name-only | grep -qx AGENTS.md ||
+    fail "AGENTS.md was not staged; it is meant to be committed"
+  pass "fm-ensure-agents-md.sh: the pointer is ignored in a git project while AGENTS.md is not"
+}
+
+test_git_project_ignore_entry_is_idempotent() {
+  local repo excl before after
+  repo=$(new_git_project git-ignore-idempotent)
+  "$ROOT/bin/fm-ensure-agents-md.sh" "$repo" >/dev/null || fail "first run failed"
+  excl="$repo/.git/info/exclude"
+  before=$(grep -c 'CLAUDE.md' "$excl")
+  "$ROOT/bin/fm-ensure-agents-md.sh" "$repo" >/dev/null || fail "second run failed"
+  after=$(grep -c 'CLAUDE.md' "$excl")
+  [ "$before" = "$after" ] || fail "the exclude entry was appended again on a repeat run"
+  pass "fm-ensure-agents-md.sh: the ignore entry is written once"
+}
+
+test_git_project_existing_gitignore_is_respected() {
+  local repo excl
+  repo=$(new_git_project git-existing-ignore)
+  printf 'CLAUDE.md\n' > "$repo/.gitignore"
+  "$ROOT/bin/fm-ensure-agents-md.sh" "$repo" >/dev/null || fail "run failed with an existing .gitignore"
+  excl="$repo/.git/info/exclude"
+  grep -q 'CLAUDE.md' "$excl" 2>/dev/null &&
+    fail "a redundant exclude entry was written even though .gitignore already covers it"
+  git -C "$repo" check-ignore -q CLAUDE.md || fail "CLAUDE.md is not ignored"
+  pass "fm-ensure-agents-md.sh: an existing ignore rule is left alone"
+}
+
+# A negation makes the path un-ignorable; the pointer must not be written at all.
+test_git_project_unignorable_pointer_is_refused() {
+  local repo out rc=0
+  repo=$(new_git_project git-unignorable)
+  printf '!CLAUDE.md\n' > "$repo/.gitignore"
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "the pointer was written into a repo that will not ignore it"
+  assert_contains "$out" "will not ignore CLAUDE.md" "refusal did not explain the ignore problem"
+  assert_absent "$repo/CLAUDE.md" "a committable CLAUDE.md was left behind"
+  pass "fm-ensure-agents-md.sh: refuses to write a pointer git will not ignore"
+}
+
+
 test_created_agents_md_includes_self_governance
 test_fresh_setup_writes_real_claude_pointer
 test_promoted_claude_md_includes_self_governance
@@ -433,3 +495,7 @@ test_agents_md_symlink_is_refused
 test_wrong_target_symlink_is_refused
 test_non_regular_claude_md_is_refused
 test_lowercase_agents_md_refuses_case_fragile_pointer
+test_git_project_pointer_is_ignored
+test_git_project_ignore_entry_is_idempotent
+test_git_project_existing_gitignore_is_respected
+test_git_project_unignorable_pointer_is_refused

@@ -14,6 +14,14 @@ A concrete crew value such as `codex` carries that runtime into the secondmate h
 Unset or `default` carries no concrete value, so its workers use that home's own or detected harness rather than the primary's effective crew harness.
 The inherited dispatch file applies the same best-fit profiles there.
 
+## Agent attribution
+
+The captain's projects carry no reference to an AI agent, and that boundary is enforced in two places.
+`../../../bin/fm-spawn.sh` switches a harness's own commit and pull-request byline off where the harness offers a control, and arms `../../../bin/fm-attribution-guard.sh` in every task copy regardless of harness.
+Only claude has a verified local control; codex's attribution is a per-workspace backend flag with no local key, and the remaining adapters are unmeasured.
+`../../../docs/verification/agent-attribution.md` holds the dated per-harness evidence and is what a new or upgraded adapter refreshes.
+Treat a missing control as normal rather than as a blocker: the guard is the guarantee, and adding a control is an improvement on top of it.
+
 ## Owners
 
 `../../../bin/fm-spawn.sh` owns launch, autonomy, concrete flags, task-kind compatibility, and worker turn-end wiring.
