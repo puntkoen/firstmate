@@ -25,8 +25,10 @@
 # verified with git check-ignore, and a pointer that cannot be made ignorable is
 # refused rather than left where a commit can pick it up. That refusal is
 # resolved before anything is written, so a refused run leaves the working tree
-# and the index untouched. AGENTS.md is written either way - that name credits
-# no vendor and is meant to be committed.
+# and the index untouched. A pointer an earlier run already wrote reaches the
+# same decision, since a run that only reports it unchanged would otherwise walk
+# past the committable file it was built to prevent. AGENTS.md is written either
+# way - that name credits no vendor and is meant to be committed.
 # bin/fm-attribution-guard.sh is the commit-time backstop for the same boundary.
 # Refuses a case-variant real memory file such as a lowercase agents.md, so the
 # pointer's @AGENTS.md import resolves to a real AGENTS.md on a case-sensitive
@@ -184,15 +186,17 @@ ensure_claude_ignored() {
   return 1
 }
 
-# Owns the refusal wording for a pointer that cannot be kept out of a commit.
-# Every branch below that is about to write calls this BEFORE its first mutation,
-# so a refusal leaves the working tree and the index exactly as they were found
-# rather than half-applied. install_claude_pointer calls it again, which is free
+# Owns the refusal wording for a pointer that cannot be kept out of a commit, and
+# the single place the ignorability decision is reached.
+# Every branch below calls this BEFORE its first mutation, so a refusal leaves the
+# working tree and the index exactly as they were found rather than half-applied.
+# That includes the branches that find a canonical pointer already in place and
+# write no pointer at all: a pointer an earlier run left behind is a real,
+# committable file in exactly the way a fresh one would be, and skipping the
+# decision there would leave the most common installation as exposed as it was
+# before this rule existed. install_claude_pointer calls it again, which is free
 # because the check is idempotent.
 require_claude_pointer_writable() {
-  if is_canonical_claude_pointer; then
-    return 0
-  fi
   local ignore_rc=0
   ensure_claude_ignored || ignore_rc=$?
   case "$ignore_rc" in
@@ -301,6 +305,7 @@ if [ -e "$AGENTS" ]; then
   fi
   if [ -f "$CLAUDE" ]; then
     if is_canonical_claude_pointer; then
+      require_claude_pointer_writable
       ensure_maintenance_section
       if [ "$MAINT_INJECTED" -eq 1 ]; then
         echo "updated: added ## Maintaining this file to AGENTS.md in $DIR"
@@ -331,6 +336,7 @@ fi
 if [ -e "$CLAUDE" ]; then
   if [ -f "$CLAUDE" ]; then
     if is_canonical_claude_pointer; then
+      require_claude_pointer_writable
       write_skeleton
       echo "created: AGENTS.md and kept CLAUDE.md @AGENTS.md pointer in $DIR"
       exit 0

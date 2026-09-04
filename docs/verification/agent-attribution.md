@@ -64,6 +64,9 @@ ok - fm-attribution-guard: a human whose name contains an agent token still comm
 ok - fm-attribution-guard: a session link refuses the commit
 ok - fm-attribution-guard: a generated-with credit refuses the commit
 ok - fm-attribution-guard: ordinary generated-with wording still commits
+ok - fm-attribution-guard: ordinary -session: wording still commits
+ok - fm-attribution-guard: a session trailer whose value is a link refuses the commit
+ok - fm-attribution-guard: a session trailer naming an agent refuses the commit without a link
 ok - fm-attribution-guard: adding CLAUDE.md refuses the commit
 ok - fm-attribution-guard: adding .claude/ refuses the commit
 ok - fm-attribution-guard: AGENTS.md still commits
@@ -77,12 +80,14 @@ ok - fm-attribution-guard: a project's unchecked hooks still run
 ok - fm-attribution-guard: a push by path is judged only on what it adds
 ok - fm-attribution-guard: a push to a never-fetched remote is judged only on what it adds
 ok - fm-attribution-guard: a push by path still refuses a commit it adds
+ok - fm-attribution-guard: a push whose remote sha is missing locally is still scanned
 ok - fm-attribution-guard: export-env refuses a hooks directory git would find empty
 ok - fm-attribution-guard: a clean branch still pushes
 ok - fm-attribution-guard: enforcement comes from the arming, not from the repository
 ```
 
 `tests/fm-spawn-attribution.test.sh` proves a real spawn delivers both layers, and `tests/fm-ensure-agents-md.test.sh` proves the `CLAUDE.md` pointer is never left committable.
+That includes a pointer an earlier run already wrote, which the script now brings under the ignore rule instead of reporting unchanged, and a pointer the repository already tracks, which no ignore rule can fix and which is therefore refused with nothing changed.
 
 ## Arming, and what it deliberately does not touch
 

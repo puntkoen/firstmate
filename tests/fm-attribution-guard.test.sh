@@ -125,6 +125,52 @@ Claude-Session: https://claude.ai/code/session_01DEDS82wWQt5RcjtK6pANJB" 2>&1) &
   pass "fm-attribution-guard: a session link refuses the commit"
 }
 
+# A `<word>-session:` line is only attribution when its value is a link or its
+# line names an agent; ordinary wording in a body must still commit.
+test_ordinary_session_wording_is_accepted() {
+  local repo
+  repo=$(new_repo ordinary-session)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  git -C "$repo" commit -qm "fix: shorten the cookie lifetime
+
+user-session: expires too early after the cookie change" ||
+    fail "an ordinary body line ending in -session: was refused"
+  [ "$(head_subject "$repo")" = "fix: shorten the cookie lifetime" ] ||
+    fail "the ordinary session-wording commit did not land"
+  git -C "$repo" log -1 --format=%B | grep -q "user-session: expires too early" ||
+    fail "the ordinary body line was lost"
+  pass "fm-attribution-guard: ordinary -session: wording still commits"
+}
+
+test_session_trailer_with_a_link_value_is_refused() {
+  local repo out
+  repo=$(new_repo session-trailer-link)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  out=$(git -C "$repo" commit -m "feat: add a
+
+Assistant-Session: https://transcripts.example.internal/s/01DEDS82" 2>&1) &&
+    fail "commit with a session trailer linking to a transcript was accepted"
+  assert_contains "$out" "session link" "refusal did not name the session-link rule"
+  [ "$(head_subject "$repo")" = "seed" ] || fail "the refused commit still landed"
+  pass "fm-attribution-guard: a session trailer whose value is a link refuses the commit"
+}
+
+test_session_trailer_naming_an_agent_is_refused() {
+  local repo out
+  repo=$(new_repo session-trailer-token)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  out=$(git -C "$repo" commit -m "feat: add a
+
+Claude-Session: session_01DEDS82wWQt5RcjtK6pANJB" 2>&1) &&
+    fail "commit with an agent-named session trailer was accepted"
+  assert_contains "$out" "session link" "refusal did not name the session-link rule"
+  [ "$(head_subject "$repo")" = "seed" ] || fail "the refused commit still landed"
+  pass "fm-attribution-guard: a session trailer naming an agent refuses the commit without a link"
+}
+
 test_generated_with_commit_is_refused() {
   local repo out
   repo=$(new_repo generated-with)
@@ -444,6 +490,44 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>" ||
 
 # Arming core.hooksPath at a directory git finds no hooks in would leave the
 # worker silently unguarded, so resolving the arming must fail instead.
+# git's pre-push input carries the object name the ref has ON THE REMOTE, which
+# a diverged or never-fetched repository need not have in its own object store.
+# `git rev-list <that sha>..<local>` then dies, and swallowing that would leave
+# the ref scanned for nothing while --force pushed it anyway.
+test_push_with_a_remote_sha_this_repo_lacks_is_still_checked() {
+  local repo remote other out
+  repo=$(new_repo missing-remote-sha)
+  remote="$TMP_ROOT/missing-remote-sha.git"
+  other="$TMP_ROOT/missing-remote-sha-other"
+  git init -q --bare "$remote"
+  git -C "$repo" remote add origin "$remote"
+  unarmed_git -C "$repo" push -q origin HEAD:refs/heads/main || fail "seed push failed"
+  # A second worker advances the remote; this repo never fetches that commit.
+  unarmed_git clone -q "$remote" "$other" || fail "fixture clone failed"
+  unarmed_git -C "$other" config user.email mate@example.com
+  unarmed_git -C "$other" config user.name Mate
+  printf 'theirs\n' > "$other/theirs.txt"
+  unarmed_git -C "$other" add theirs.txt
+  unarmed_git -C "$other" commit -qm "feat: their work" || fail "fixture commit failed"
+  unarmed_git -C "$other" push -q origin HEAD:refs/heads/main || fail "fixture push failed"
+
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  git -C "$repo" commit -q --no-verify -m "feat: add a
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>" ||
+    fail "the tainted commit did not land, so the push case cannot be exercised"
+  git -C "$repo" cat-file -e "$(git -C "$remote" rev-parse refs/heads/main)^{commit}" 2>/dev/null &&
+    fail "the fixture repository has the remote's commit, so it does not exercise the case"
+  out=$(git -C "$repo" push --force origin HEAD:refs/heads/main 2>&1) &&
+    fail "a force push whose remote sha is unknown locally was accepted unchecked"
+  assert_contains "$out" "outgoing commit carries agent attribution" \
+    "the push refusal did not name the outgoing commit"
+  [ "$(git -C "$remote" log -1 --format=%s refs/heads/main)" = "feat: their work" ] ||
+    fail "the tainted commit reached the remote"
+  pass "fm-attribution-guard: a push whose remote sha is missing locally is still scanned"
+}
+
 test_export_env_refuses_a_hooks_dir_without_the_checked_hooks() {
   local stage out rc=0
   stage="$TMP_ROOT/bare-hooks/bin"
@@ -500,6 +584,9 @@ test_humans_whose_names_contain_agent_tokens_are_accepted
 test_session_link_commit_is_refused
 test_generated_with_commit_is_refused
 test_ordinary_generated_wording_is_accepted
+test_ordinary_session_wording_is_accepted
+test_session_trailer_with_a_link_value_is_refused
+test_session_trailer_naming_an_agent_is_refused
 test_claude_md_commit_is_refused
 test_claude_dir_commit_is_refused
 test_agents_md_commit_is_accepted
@@ -513,6 +600,7 @@ test_project_pass_through_hooks_still_run
 test_push_to_a_path_remote_ignores_ancestors_the_remote_has
 test_push_to_a_never_fetched_remote_ignores_ancestors_the_remote_has
 test_push_to_a_path_remote_still_refuses_a_new_tainted_commit
+test_push_with_a_remote_sha_this_repo_lacks_is_still_checked
 test_export_env_refuses_a_hooks_dir_without_the_checked_hooks
 test_clean_push_is_accepted
 test_unarmed_repo_is_not_enforced

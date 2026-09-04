@@ -89,9 +89,17 @@ TIER_A_RE='(^|[^[:alnum:]])(anthropic|codex|chatgpt|openai|copilot|opencode|clau
 TIER_B_RE='(^|[^[:alnum:]])(claude|gemini|grok|kimi|jules|opus|sonnet|haiku|qwen|llama|mistral)([^[:alnum:]]|$)'
 BOT_SIGNAL_RE='noreply|no-reply|@(anthropic\.com|openai\.com|cursor\.com|x\.ai|xai\.com|moonshot\.(cn|ai)|deepmind\.com)|bot@|\[bot\]'
 COAUTHOR_RE='^[[:space:]]*co-?authored?-by:'
-# A session link is a trailer whose key ends in -Session, or any URL on a host
-# that only ever identifies an agent transcript or agent product page.
+# A session link is a trailer whose key ends in -Session whose value is a link
+# or whose line names an agent, or any URL on a host that only ever identifies
+# an agent transcript or agent product page. The value is what makes such a
+# trailer attribution: an ordinary body line reading `user-session: expires too
+# early after the cookie change` links to nothing and names nobody, and refusing
+# it would block a human commit over wording, which is the same false positive
+# the tier split exists to avoid. Nothing real is lost, because
+# `Claude-Session: https://claude.ai/code/session_...` carries both a link and a
+# token and AGENT_URL_RE refuses it a second time.
 SESSION_TRAILER_RE='^[[:space:]]*[a-z][a-z0-9_-]*-session:[[:space:]]*[^[:space:]]'
+SESSION_TRAILER_URL_RE='^[[:space:]]*[a-z][a-z0-9_-]*-session:[[:space:]]*[a-z][a-z0-9+.-]*://'
 AGENT_URL_RE='https?://[^[:space:]]*(claude\.ai|claude\.com|anthropic\.com|chatgpt\.com|chat\.openai\.com|openai\.com/codex|cursor\.com|gemini\.google\.com|x\.ai/grok)'
 # The verbs are anchored on non-alphanumeric boundaries so `written by` does not
 # fire inside `rewritten by`, `overwritten by`, or `handwritten by`.
@@ -132,6 +140,22 @@ agent_path_reason() {  # <path>; prints a reason and returns 0 when the path is 
   fi
   printf '%s\n' "$path $problem"
   return 0
+}
+
+# Owns which lines count as a session link, for both the message passes.
+is_session_link() {  # <line>
+  local text=$1
+  if [[ $text =~ $AGENT_URL_RE ]]; then
+    return 0
+  fi
+  if [[ $text =~ $SESSION_TRAILER_RE ]]; then
+    if [[ $text =~ $SESSION_TRAILER_URL_RE ]] ||
+       [[ $text =~ $TIER_A_RE ]] ||
+       [[ $text =~ $TIER_B_RE ]]; then
+      return 0
+    fi
+  fi
+  return 1
 }
 
 REASONS=()
@@ -176,7 +200,7 @@ scan_message() {  # [strip-comments|verbatim]
       fi
       continue
     fi
-    if [[ $text =~ $SESSION_TRAILER_RE ]] || [[ $text =~ $AGENT_URL_RE ]]; then
+    if is_session_link "$text"; then
       add_reason "session link: $line"
       found=1
       continue
@@ -368,33 +392,63 @@ outgoing_exclusions() {  # <remote>; prints one rev-list argument per line
   return 0
 }
 
-run_pre_push() {  # <remote-name>; reads git's ref lines on file descriptor 0
-  local remote=$1 local_sha remote_sha rev range probe count exclusions line
-  local revs=() args=()
+# Owns the wording for a push whose outgoing range could not be bounded.
+warn_unbounded_range() {  # <remote>
+  printf 'firstmate: %s could not ask %s which commits it already has, so every commit on this ref is checked and a refusal may name one the remote already carries\n' \
+    "$SELF_NAME" "$1" >&2
+}
+
+# The outgoing revs for one ref, newest first, bounded by what the push target
+# already has.
+#
+# git's ref line carries the object name the ref has ON THE REMOTE, and this
+# repository need not have that object: a diverged branch, a never-fetched ref,
+# and a pruned object all produce a name `git rev-list <remote-sha>..<local-sha>`
+# rejects as a bad object. Swallowing that failure would leave the ref scanned
+# for nothing at all, and `--force` or `--force-with-lease` would then carry
+# commits this guard never read, so an unusable remote sha falls back to the
+# same bound the remote itself reports. When even that cannot be established the
+# whole local ref is scanned and the fallback says so, because a guard that
+# silently checks nothing is worse than one that refuses too much.
+outgoing_range() {  # <remote> <local-sha> <remote-sha>
+  local remote=$1 local_sha=$2 remote_sha=$3 exclusions line probe range
   probe=$((MAX_OUTGOING_COMMITS + 1))
+  local args=("--max-count=$probe" "$local_sha")
+  if [ -n "$remote_sha" ] && ! is_zero_sha "$remote_sha" &&
+    git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+    if range=$(git rev-list "--max-count=$probe" "$remote_sha..$local_sha" 2>/dev/null); then
+      printf '%s\n' "$range"
+      return 0
+    fi
+  fi
+  if exclusions=$(outgoing_exclusions "$remote"); then
+    if [ -n "$exclusions" ]; then
+      args+=(--not)
+      while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        args+=("$line")
+      done <<< "$exclusions"
+    fi
+  else
+    warn_unbounded_range "$remote"
+  fi
+  if range=$(git rev-list "${args[@]}" 2>/dev/null); then
+    printf '%s\n' "$range"
+    return 0
+  fi
+  warn_unbounded_range "$remote"
+  git rev-list "--max-count=$probe" "$local_sha" 2>/dev/null || true
+}
+
+run_pre_push() {  # <remote-name>; reads git's ref lines on file descriptor 0
+  local remote=$1 local_sha remote_sha rev range count
+  local revs=()
   # git's ref line is "<local ref> <local sha> <remote ref> <remote sha>"; only
   # the two shas bound the outgoing range.
   while read -r _ local_sha _ remote_sha; do
     [ -n "${local_sha:-}" ] || continue
     is_zero_sha "$local_sha" && continue
-    if [ -n "${remote_sha:-}" ] && ! is_zero_sha "$remote_sha"; then
-      range=$(git rev-list "--max-count=$probe" "$remote_sha..$local_sha" 2>/dev/null) || range=
-    else
-      args=("--max-count=$probe" "$local_sha")
-      if exclusions=$(outgoing_exclusions "$remote"); then
-        if [ -n "$exclusions" ]; then
-          args+=(--not)
-          while IFS= read -r line; do
-            [ -n "$line" ] || continue
-            args+=("$line")
-          done <<< "$exclusions"
-        fi
-      else
-        printf 'firstmate: %s could not ask %s which commits it already has, so every commit on this ref is checked and a refusal may name one the remote already carries\n' \
-          "$SELF_NAME" "$remote" >&2
-      fi
-      range=$(git rev-list "${args[@]}" 2>/dev/null) || range=
-    fi
+    range=$(outgoing_range "$remote" "$local_sha" "${remote_sha:-}")
     count=0
     while IFS= read -r rev; do
       [ -n "$rev" ] || continue
