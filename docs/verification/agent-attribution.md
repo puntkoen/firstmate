@@ -68,6 +68,9 @@ ok - fm-attribution-guard: adding .claude/ refuses the commit
 ok - fm-attribution-guard: AGENTS.md still commits
 ok - fm-attribution-guard: the project's own commit-msg hook still runs
 ok - fm-attribution-guard: a --no-verify commit is still refused at push
+ok - fm-attribution-guard: a trailer hidden in a comment is refused at push
+ok - fm-attribution-guard: an already-tracked agent path stays maintainable
+ok - fm-attribution-guard: ordinary wording naming a model vendor still commits
 ok - fm-attribution-guard: a clean branch still pushes
 ok - fm-attribution-guard: enforcement comes from the arming, not from the repository
 ```
@@ -87,3 +90,8 @@ $ GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/tmp/hoo
 ```
 
 Verified on git 2.50.1 (Apple Git-155).
+
+`bin/fm-ensure-agents-md.sh` does write one line into that shared `.git`, and that is deliberate rather than an oversight.
+The two cases are not the same: a hook file changes how every commit made from the captain's own checkout behaves, while an `info/exclude` entry only stops one vendor-named file from being committed anywhere in that repository.
+Stopping that file everywhere in the repository, not only in one task copy, is the requirement, so the shared scope of the common directory is the point rather than a cost.
+`bin/fm-spawn.sh`'s `exclude_path` already writes to the same file by the same route.

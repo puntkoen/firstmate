@@ -464,16 +464,39 @@ test_git_project_existing_gitignore_is_respected() {
   pass "fm-ensure-agents-md.sh: an existing ignore rule is left alone"
 }
 
-# A negation makes the path un-ignorable; the pointer must not be written at all.
+# A negation makes the path un-ignorable; the pointer must not be written at all,
+# and the exclude file must be left exactly as it was found.
 test_git_project_unignorable_pointer_is_refused() {
-  local repo out rc=0
+  local repo out rc=0 excl before
   repo=$(new_git_project git-unignorable)
   printf '!CLAUDE.md\n' > "$repo/.gitignore"
+  excl="$repo/.git/info/exclude"
+  before=$(cat "$excl" 2>/dev/null || printf '')
   out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) || rc=$?
   [ "$rc" -ne 0 ] || fail "the pointer was written into a repo that will not ignore it"
   assert_contains "$out" "will not ignore CLAUDE.md" "refusal did not explain the ignore problem"
   assert_absent "$repo/CLAUDE.md" "a committable CLAUDE.md was left behind"
-  pass "fm-ensure-agents-md.sh: refuses to write a pointer git will not ignore"
+  [ "$(cat "$excl" 2>/dev/null || printf '')" = "$before" ] ||
+    fail "the refused run left an orphan entry in the repository's exclude file"
+  pass "fm-ensure-agents-md.sh: refuses to write a pointer git will not ignore and rolls its entry back"
+}
+
+# git check-ignore consults the index, so a tracked CLAUDE.md can never be made
+# ignorable. This is the shape a project is left in by `git rm` on the file.
+test_git_project_tracked_pointer_is_refused() {
+  local repo out rc=0
+  repo=$(new_git_project git-tracked-pointer)
+  printf '# project memory\n' > "$repo/AGENTS.md"
+  printf '@AGENTS.md\n' > "$repo/CLAUDE.md"
+  git -C "$repo" add AGENTS.md CLAUDE.md
+  git -C "$repo" commit -qm seed || fail "fixture commit failed"
+  rm -- "$repo/CLAUDE.md"
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "the pointer was written into a repo that tracks CLAUDE.md"
+  assert_contains "$out" "tracked" "refusal did not name tracking as the problem"
+  assert_contains "$out" "git rm --cached" "refusal did not name a remedy that can work"
+  assert_absent "$repo/CLAUDE.md" "a tracked, committable CLAUDE.md was written back"
+  pass "fm-ensure-agents-md.sh: refuses the pointer when CLAUDE.md is tracked"
 }
 
 
@@ -499,3 +522,4 @@ test_git_project_pointer_is_ignored
 test_git_project_ignore_entry_is_idempotent
 test_git_project_existing_gitignore_is_respected
 test_git_project_unignorable_pointer_is_refused
+test_git_project_tracked_pointer_is_refused

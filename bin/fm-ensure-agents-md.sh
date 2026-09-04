@@ -136,23 +136,59 @@ is_canonical_claude_pointer() {
   claude_pointer_content | cmp -s - "$CLAUDE"
 }
 
+# Remove exactly the entry this run appended, so a refused pointer write leaves
+# the exclude file as it found it and never touches a line someone else put there.
+drop_exclude_entry() {  # <exclude-file> <entry>
+  local excl=$1 entry=$2 tmp="$1.fm-$$"
+  grep -vxF -- "$entry" "$excl" > "$tmp" 2>/dev/null || :
+  mv -- "$tmp" "$excl"
+}
+
 # Make git ignore CLAUDE.md in this directory before the pointer is written.
 # The entry goes in the repo-local exclude file rather than the tracked
-# .gitignore, so this never edits a file the project owns. Returns non-zero when
-# the path still is not ignored, which is the caller's cue to refuse the write.
+# .gitignore, so this never edits a file the project owns.
+#
+# Deliberate exception to "stay inside your own working copy": `git rev-parse
+# --git-path info/exclude` resolves to the git COMMON directory, so from a linked
+# worktree the entry lands in the shared exclude file of the main checkout. That
+# whole-repository scope is the point - the rule has to hold for every copy of
+# the project and not only for one task copy - and bin/fm-spawn.sh's exclude_path
+# already reaches the same file by the same route. Do not narrow this to the
+# linked worktree. docs/verification/agent-attribution.md records why this is
+# allowed where installing hook files there is not.
+#
+# Returns 1 when the path still is not ignored and 2 when CLAUDE.md is tracked,
+# which no ignore rule can fix; both are the caller's cue to refuse the write.
 ensure_claude_ignored() {
-  local excl prefix entry
+  local excl prefix entry appended=0
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
   if git check-ignore -q "$CLAUDE" 2>/dev/null; then
     return 0
+  fi
+  # git check-ignore consults the index, so a tracked path is never reported as
+  # ignored no matter what is excluded. That is the shape a project is left in by
+  # `git rm` while the blob stays in the index.
+  if git ls-files --error-unmatch -- "$CLAUDE" >/dev/null 2>&1; then
+    return 2
   fi
   excl=$(git rev-parse --git-path info/exclude 2>/dev/null) || return 1
   [ -n "$excl" ] || return 1
   prefix=$(git rev-parse --show-prefix 2>/dev/null) || prefix=
   entry="/${prefix}${CLAUDE}"
   mkdir -p "$(dirname "$excl")" || return 1
-  grep -qxF "$entry" "$excl" 2>/dev/null || printf '%s\n' "$entry" >> "$excl" || return 1
-  git check-ignore -q "$CLAUDE" 2>/dev/null
+  if ! grep -qxF "$entry" "$excl" 2>/dev/null; then
+    # An unterminated last line would otherwise swallow the new entry.
+    if [ -s "$excl" ] && [ -n "$(tail -c 1 "$excl")" ]; then
+      printf '\n' >> "$excl" || return 1
+    fi
+    printf '%s\n' "$entry" >> "$excl" || return 1
+    appended=1
+  fi
+  if git check-ignore -q "$CLAUDE" 2>/dev/null; then
+    return 0
+  fi
+  [ "$appended" -eq 0 ] || drop_exclude_entry "$excl" "$entry"
+  return 1
 }
 
 # Write the canonical pointer as a regular file. Unlink a symlink first so the
@@ -162,10 +198,19 @@ install_claude_pointer() {
   if is_canonical_claude_pointer; then
     return 0
   fi
-  if ! ensure_claude_ignored; then
-    echo "error: git will not ignore CLAUDE.md in $DIR, so writing the pointer would leave a committable agent file; add CLAUDE.md to this repo's ignore rules (AGENTS.md is unaffected)" >&2
-    exit 1
-  fi
+  local ignore_rc=0
+  ensure_claude_ignored || ignore_rc=$?
+  case "$ignore_rc" in
+    0) ;;
+    2)
+      echo "error: CLAUDE.md is tracked in this repo ($DIR), so no ignore rule can keep the pointer out of a commit; stop tracking it with git rm --cached CLAUDE.md first (AGENTS.md is unaffected)" >&2
+      exit 1
+      ;;
+    *)
+      echo "error: git will not ignore CLAUDE.md in $DIR, so writing the pointer would leave a committable agent file; add CLAUDE.md to this repo's ignore rules (AGENTS.md is unaffected)" >&2
+      exit 1
+      ;;
+  esac
   if [ -L "$CLAUDE" ]; then
     rm -- "$CLAUDE"
   elif [ -e "$CLAUDE" ]; then

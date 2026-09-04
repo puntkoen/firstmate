@@ -45,9 +45,12 @@
 #     an IDE, CI) defeats the arming.
 #   - Pull request titles and bodies never reach a git hook. Harness-side
 #     suppression and the crewmate brief cover those.
-#   - A message is read the way git's default cleanup leaves it, so `#` lines
-#     are ignored; under --cleanup=verbatim a trailer hidden in a comment
-#     survives the commit-msg pass and is caught by the pre-push pass instead.
+#   - The commit-msg pass reads the message the way git's default cleanup leaves
+#     it, so `#` lines are ignored there. The pre-push pass reads the recorded
+#     message, where a `#` is final text, so a trailer hidden behind one under
+#     --cleanup=verbatim is refused there.
+#   - The pre-push pass checks at most 1000 outgoing commits per ref, newest
+#     first, and says on stderr when a push exceeds that.
 set -eu
 shopt -s nocasematch
 
@@ -79,25 +82,44 @@ COAUTHOR_RE='^[[:space:]]*co-?authored?-by:'
 # that only ever identifies an agent transcript or agent product page.
 SESSION_TRAILER_RE='^[[:space:]]*[a-z][a-z0-9_-]*-session:[[:space:]]*[^[:space:]]'
 AGENT_URL_RE='https?://[^[:space:]]*(claude\.ai|claude\.com|anthropic\.com|chatgpt\.com|chat\.openai\.com|openai\.com/codex|cursor\.com|gemini\.google\.com|x\.ai/grok)'
-CREDIT_RE='(generated|created|authored|written|built|assisted|co-created) (with|by)'
+# The verbs are anchored on non-alphanumeric boundaries so `written by` does not
+# fire inside `rewritten by`, `overwritten by`, or `handwritten by`.
+CREDIT_RE='(^|[^[:alnum:]])(generated|created|authored|written|built|assisted) (with|by)([^[:alnum:]]|$)'
 
 # Agent memory and agent configuration paths. CLAUDE.md is the concrete leak
 # this guard was built for: bin/fm-ensure-agents-md.sh writes one into every
 # project copy, and a repo whose ignore list happened not to name it committed
 # it. AGENTS.md is deliberately absent from this list - that name credits nobody.
+#
+# A path the repository already tracks is not refused: a project that
+# deliberately committed one of these names may keep maintaining it, and a
+# name-based exemption for one such project would be forgotten the moment a
+# second one appears. Trackedness is judged against BASE_REF - HEAD for a
+# staged check, the commit's own first parent for an outgoing commit - so an
+# older commit is never judged against today's HEAD. An empty BASE_REF, which is
+# what an unborn branch and a root commit both produce, tracks nothing.
+BASE_REF=
+
+path_is_tracked() {  # <path>
+  [ -n "$BASE_REF" ] || return 1
+  git cat-file -e "$BASE_REF:$path" 2>/dev/null
+}
+
 agent_path_reason() {  # <path>; prints a reason and returns 0 when the path is refused
-  local path=$1 base=${1##*/}
+  local path=$1 base=${1##*/} problem=
   if [[ $base == CLAUDE.md ]]; then
-    printf '%s\n' "$path names an agent vendor; project memory belongs in AGENTS.md"
-    return 0
+    problem="names an agent vendor; project memory belongs in AGENTS.md"
+  else
+    case "/$path/" in
+      */.claude/*) problem="is agent configuration and must stay out of the project" ;;
+    esac
   fi
-  case "/$path/" in
-    */.claude/*)
-      printf '%s\n' "$path is agent configuration and must stay out of the project"
-      return 0
-      ;;
-  esac
-  return 1
+  [ -n "$problem" ] || return 1
+  if path_is_tracked "$path"; then
+    return 1
+  fi
+  printf '%s\n' "$path $problem"
+  return 0
 }
 
 REASONS=()
@@ -118,25 +140,38 @@ refuse() {  # <headline>
 # Appends one reason per offending line; returns 1 when the text is refused.
 # Reads the message on file descriptor 0 and never runs in a pipeline, so the
 # reasons it collects survive into the caller.
-scan_message() {
-  local line found=0
+#
+# Mode `strip-comments` is for the commit-msg buffer, where git's default cleanup
+# is still to come and a `#` line is an editor comment. Mode `verbatim` is for a
+# recorded message, which is final text: a `#` there is a character the author
+# chose to keep, so the comment marker is peeled off and what it hides is scanned
+# like any other line. That is what closes --cleanup=verbatim at push time.
+scan_message() {  # [strip-comments|verbatim]
+  local mode=${1:-strip-comments} line text found=0
   while IFS= read -r line || [ -n "$line" ]; do
-    [[ $line =~ ^[[:space:]]*# ]] && continue
-    if [[ $line =~ $COAUTHOR_RE ]]; then
-      if [[ $line =~ $TIER_A_RE ]] ||
-         { [[ $line =~ $TIER_B_RE ]] && [[ $line =~ $BOT_SIGNAL_RE ]]; }; then
+    text=$line
+    if [[ $text =~ ^[[:space:]]*#+[[:space:]]* ]]; then
+      if [ "$mode" = strip-comments ]; then
+        continue
+      fi
+      text=${text#"${BASH_REMATCH[0]}"}
+    fi
+    if [[ $text =~ $COAUTHOR_RE ]]; then
+      if [[ $text =~ $TIER_A_RE ]] ||
+         { [[ $text =~ $TIER_B_RE ]] && [[ $text =~ $BOT_SIGNAL_RE ]]; }; then
         add_reason "co-author line naming an agent: $line"
         found=1
       fi
       continue
     fi
-    if [[ $line =~ $SESSION_TRAILER_RE ]] || [[ $line =~ $AGENT_URL_RE ]]; then
+    if [[ $text =~ $SESSION_TRAILER_RE ]] || [[ $text =~ $AGENT_URL_RE ]]; then
       add_reason "session link: $line"
       found=1
       continue
     fi
-    if [[ $line =~ $CREDIT_RE ]] &&
-       { [[ $line =~ $TIER_A_RE ]] || [[ $line =~ $TIER_B_RE ]]; }; then
+    if [[ $text =~ $CREDIT_RE ]] &&
+       { [[ $text =~ $TIER_A_RE ]] ||
+         { [[ $text =~ $TIER_B_RE ]] && [[ $text =~ $BOT_SIGNAL_RE ]]; }; }; then
       add_reason "generated-with credit: $line"
       found=1
     fi
@@ -147,7 +182,7 @@ scan_message() {
 check_message() {  # <file>
   [ -f "${1:-}" ] || { echo "error: no such commit message file: ${1:-}" >&2; exit 2; }
   REASONS=()
-  scan_message < "$1" || refuse "commit message carries agent attribution"
+  scan_message strip-comments < "$1" || refuse "commit message carries agent attribution"
 }
 
 # --- path check -------------------------------------------------------------
@@ -168,6 +203,7 @@ scan_paths() {
 # $(...) output, which would silently destroy the -z separation.
 check_staged() {
   REASONS=()
+  BASE_REF=$(git rev-parse --verify --quiet HEAD) || BASE_REF=
   scan_paths < <(git diff --cached --name-only --diff-filter=ACMR -z) ||
     refuse "commit adds agent files"
 }
@@ -179,8 +215,9 @@ check_commits() {  # <rev>...
   for rev in "$@"; do
     short=$(git log -1 --format=%h "$rev")
     message=$(git log -1 --format=%B "$rev")
+    BASE_REF=$(git rev-parse --verify --quiet "$rev^1") || BASE_REF=
     REASONS=()
-    scan_message <<< "$message" || {
+    scan_message verbatim <<< "$message" || {
       REASONS=("commit $short:" ${REASONS[@]+"${REASONS[@]}"})
       refuse "an outgoing commit carries agent attribution"
     }
@@ -246,21 +283,33 @@ chain_original_hook() {  # <hook-name> <arg>...
 
 is_zero_sha() { case "$1" in *[!0]*) return 1 ;; *) return 0 ;; esac; }
 
+# One more than the cap is requested so a real truncation is detectable and can
+# be reported instead of silently dropping the oldest outgoing commits.
+MAX_OUTGOING_COMMITS=1000
+
 run_pre_push() {  # <remote-name>; reads git's ref lines on file descriptor 0
-  local remote=$1 local_sha remote_sha rev range
+  local remote=$1 local_sha remote_sha rev range probe count
   local revs=()
+  probe=$((MAX_OUTGOING_COMMITS + 1))
   # git's ref line is "<local ref> <local sha> <remote ref> <remote sha>"; only
   # the two shas bound the outgoing range.
   while read -r _ local_sha _ remote_sha; do
     [ -n "${local_sha:-}" ] || continue
     is_zero_sha "$local_sha" && continue
     if [ -n "${remote_sha:-}" ] && ! is_zero_sha "$remote_sha"; then
-      range=$(git rev-list --max-count=1000 "$remote_sha..$local_sha" 2>/dev/null) || range=
+      range=$(git rev-list "--max-count=$probe" "$remote_sha..$local_sha" 2>/dev/null) || range=
     else
-      range=$(git rev-list --max-count=1000 "$local_sha" --not "--remotes=$remote" 2>/dev/null) || range=
+      range=$(git rev-list "--max-count=$probe" "$local_sha" --not "--remotes=$remote" 2>/dev/null) || range=
     fi
+    count=0
     while IFS= read -r rev; do
       [ -n "$rev" ] || continue
+      count=$((count + 1))
+      if [ "$count" -gt "$MAX_OUTGOING_COMMITS" ]; then
+        printf 'firstmate: %s checks only the newest %s outgoing commits; older commits in this push are unchecked\n' \
+          "$SELF_NAME" "$MAX_OUTGOING_COMMITS" >&2
+        break
+      fi
       revs[${#revs[@]}]=$rev
     done <<< "$range"
   done

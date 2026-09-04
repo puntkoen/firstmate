@@ -210,6 +210,85 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>" ||
   pass "fm-attribution-guard: a --no-verify commit is still refused at push"
 }
 
+# A recorded message is final text, so a `#` line in it is real content. Git's
+# default cleanup would have removed this trailer before the commit existed;
+# --cleanup=verbatim keeps it, so the push pass is what has to see it.
+test_verbatim_commented_trailer_is_caught_at_push() {
+  local repo remote out msg
+  repo=$(new_repo verbatim-comment)
+  remote="$TMP_ROOT/verbatim-comment.git"
+  git init -q --bare "$remote"
+  git -C "$repo" remote add origin "$remote"
+  unarmed_git -C "$repo" push -q origin HEAD:refs/heads/main || fail "seed push failed"
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  msg="$TMP_ROOT/verbatim-comment.msg"
+  printf 'feat: add a\n\n# Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>\n' > "$msg"
+  git -C "$repo" commit -q --cleanup=verbatim -F "$msg" ||
+    fail "the commented trailer did not commit, so the push case cannot be exercised"
+  git -C "$repo" log -1 --format=%B | grep -q 'noreply@anthropic.com' ||
+    fail "the commented trailer did not survive into the recorded message"
+  out=$(git -C "$repo" push origin HEAD:refs/heads/main 2>&1) &&
+    fail "pushing a recorded message that hides an agent trailer in a comment was accepted"
+  assert_contains "$out" "outgoing commit carries agent attribution" \
+    "the push refusal did not name the outgoing commit"
+  [ "$(git -C "$remote" log -1 --format=%s refs/heads/main)" = "seed" ] ||
+    fail "the tainted commit reached the remote"
+  pass "fm-attribution-guard: a trailer hidden in a comment is refused at push"
+}
+
+# A repository that deliberately tracks one of these names must stay maintainable;
+# a new one appearing beside it is still refused.
+test_tracked_agent_path_stays_maintainable() {
+  local repo remote out
+  repo=$(new_repo tracked-agent-path)
+  remote="$TMP_ROOT/tracked-agent-path.git"
+  git init -q --bare "$remote"
+  mkdir -p "$repo/.claude"
+  printf '{}\n' > "$repo/.claude/settings.json"
+  printf '@AGENTS.md\n' > "$repo/CLAUDE.md"
+  unarmed_git -C "$repo" add -f .claude/settings.json CLAUDE.md
+  unarmed_git -C "$repo" commit -qm "chore: track agent config on purpose" ||
+    fail "fixture commit failed"
+  git -C "$repo" remote add origin "$remote"
+  unarmed_git -C "$repo" push -q origin HEAD:refs/heads/main || fail "seed push failed"
+
+  printf '{"model":"x"}\n' > "$repo/.claude/settings.json"
+  printf '@AGENTS.md\n\n' > "$repo/CLAUDE.md"
+  git -C "$repo" add .claude/settings.json CLAUDE.md
+  git -C "$repo" commit -qm "chore: update the tracked agent config" ||
+    fail "modifying already-tracked agent paths was refused"
+  git -C "$repo" push -q origin HEAD:refs/heads/main ||
+    fail "pushing a change to already-tracked agent paths was refused"
+  [ "$(git -C "$remote" log -1 --format=%s refs/heads/main)" = "chore: update the tracked agent config" ] ||
+    fail "the tracked-path change did not reach the remote"
+
+  printf '{}\n' > "$repo/.claude/other.json"
+  git -C "$repo" add -f .claude/other.json
+  out=$(git -C "$repo" commit -m "chore: add a new agent file" 2>&1) &&
+    fail "a new .claude path was accepted just because a sibling is tracked"
+  assert_contains "$out" ".claude/other.json" "refusal did not name the untracked path"
+  pass "fm-attribution-guard: an already-tracked agent path stays maintainable"
+}
+
+# Tier B is a vendor product name that is also an ordinary English word or given
+# name, so on its own it is not attribution.
+test_ordinary_vendor_wording_is_accepted() {
+  local repo
+  repo=$(new_repo vendor-wording)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  git -C "$repo" commit -qm "refactor: the tokenizer was rewritten by hand to drop the llama dependency" ||
+    fail "a message whose 'written by' sits inside 'rewritten by' was refused"
+  printf 'more\n' > "$repo/b.txt"
+  git -C "$repo" add b.txt
+  git -C "$repo" commit -qm "feat: response created with mistral-small endpoint" ||
+    fail "a vendor product name without a bot signal was refused"
+  [ "$(head_subject "$repo")" = "feat: response created with mistral-small endpoint" ] ||
+    fail "the ordinary vendor-wording commit did not land"
+  pass "fm-attribution-guard: ordinary wording naming a model vendor still commits"
+}
+
 test_clean_push_is_accepted() {
   local repo remote
   repo=$(new_repo clean-push)
@@ -255,5 +334,8 @@ test_claude_dir_commit_is_refused
 test_agents_md_commit_is_accepted
 test_project_hook_still_runs
 test_no_verify_commit_is_caught_at_push
+test_verbatim_commented_trailer_is_caught_at_push
+test_tracked_agent_path_stays_maintainable
+test_ordinary_vendor_wording_is_accepted
 test_clean_push_is_accepted
 test_unarmed_repo_is_not_enforced
