@@ -38,6 +38,14 @@
 # Usage: fm-ensure-agents-md.sh [repo-or-worktree-dir]
 set -eu
 
+# Resolved before the cd below so a crewmate can invoke this by absolute path
+# from any worktree. bin/fm-git-exclude-lib.sh owns every write to the
+# repository's exclude file, including the locking that keeps a parallel spawn's
+# entry from being lost.
+FM_ENSURE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+# shellcheck source=bin/fm-git-exclude-lib.sh
+. "$FM_ENSURE_DIR/fm-git-exclude-lib.sh"
+
 usage() {
   echo "usage: fm-ensure-agents-md.sh [repo-or-worktree-dir]" >&2
   cat >&2 <<'EOF'
@@ -138,14 +146,6 @@ is_canonical_claude_pointer() {
   claude_pointer_content | cmp -s - "$CLAUDE"
 }
 
-# Remove exactly the entry this run appended, so a refused pointer write leaves
-# the exclude file as it found it and never touches a line someone else put there.
-drop_exclude_entry() {  # <exclude-file> <entry>
-  local excl=$1 entry=$2 tmp="$1.fm-$$"
-  grep -vxF -- "$entry" "$excl" > "$tmp" 2>/dev/null || :
-  mv -- "$tmp" "$excl"
-}
-
 # Make git ignore CLAUDE.md in this directory before the pointer is written.
 # The entry goes in the repo-local exclude file rather than the tracked
 # .gitignore, so this never edits a file the project owns.
@@ -162,7 +162,7 @@ drop_exclude_entry() {  # <exclude-file> <entry>
 # Returns 1 when the path still is not ignored and 2 when CLAUDE.md is tracked,
 # which no ignore rule can fix; both are the caller's cue to refuse the write.
 ensure_claude_ignored() {
-  local excl prefix entry appended=0
+  local prefix entry appended
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
   if git check-ignore -q "$CLAUDE" 2>/dev/null; then
     return 0
@@ -173,23 +173,14 @@ ensure_claude_ignored() {
   if git ls-files --error-unmatch -- "$CLAUDE" >/dev/null 2>&1; then
     return 2
   fi
-  excl=$(git rev-parse --git-path info/exclude 2>/dev/null) || return 1
-  [ -n "$excl" ] || return 1
   prefix=$(git rev-parse --show-prefix 2>/dev/null) || prefix=
   entry="/${prefix}${CLAUDE}"
-  mkdir -p "$(dirname "$excl")" || return 1
-  if ! grep -qxF "$entry" "$excl" 2>/dev/null; then
-    # An unterminated last line would otherwise swallow the new entry.
-    if [ -s "$excl" ] && [ -n "$(tail -c 1 "$excl")" ]; then
-      printf '\n' >> "$excl" || return 1
-    fi
-    printf '%s\n' "$entry" >> "$excl" || return 1
-    appended=1
-  fi
+  fm_git_exclude_add "$DIR" "$entry" || return 1
+  appended=$FM_GIT_EXCLUDE_ADDED
   if git check-ignore -q "$CLAUDE" 2>/dev/null; then
     return 0
   fi
-  [ "$appended" -eq 0 ] || drop_exclude_entry "$excl" "$entry"
+  [ "$appended" -eq 0 ] || fm_git_exclude_remove "$DIR" "$entry"
   return 1
 }
 

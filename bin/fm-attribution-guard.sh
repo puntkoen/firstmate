@@ -81,8 +81,12 @@ EOF
 # sight. Tier B is a product name that is also a human given name, so it is
 # refused only together with a bot signal on the same line. That split is what
 # keeps a real human co-author working, which is the whole reason it exists.
-TIER_A_RE='anthropic|codex|chatgpt|openai|copilot|opencode|claude[ -]code|cursor[ -]?agent|gemini[ -]cli|gpt-[0-9]|devin|aider|windsurf|codewhisperer|tabnine|ai (assistant|agent|bot)|\[bot\]'
-TIER_B_RE='claude|gemini|grok|kimi|jules|opus|sonnet|haiku|qwen|llama|mistral'
+# Both token lists are anchored on non-alphanumeric boundaries so a token only
+# matches as a whole word: `aider` must not fire inside a person named Raider,
+# nor `codex` inside Codexis. `gpt-[0-9]` and `[bot]` carry their own delimiters
+# and stay outside the anchored group so they keep matching as they always did.
+TIER_A_RE='(^|[^[:alnum:]])(anthropic|codex|chatgpt|openai|copilot|opencode|claude[ -]code|cursor[ -]?agent|gemini[ -]cli|devin|aider|windsurf|codewhisperer|tabnine|ai (assistant|agent|bot))([^[:alnum:]]|$)|gpt-[0-9]|\[bot\]'
+TIER_B_RE='(^|[^[:alnum:]])(claude|gemini|grok|kimi|jules|opus|sonnet|haiku|qwen|llama|mistral)([^[:alnum:]]|$)'
 BOT_SIGNAL_RE='noreply|no-reply|@(anthropic\.com|openai\.com|cursor\.com|x\.ai|xai\.com|moonshot\.(cn|ai)|deepmind\.com)|bot@|\[bot\]'
 COAUTHOR_RE='^[[:space:]]*co-?authored?-by:'
 # A session link is a trailer whose key ends in -Session, or any URL on a host
@@ -285,6 +289,29 @@ original_hooks_dir() {
   printf '%s\n' "$value/hooks"
 }
 
+# The three names that run a verdict of their own before chaining. Arming
+# core.hooksPath at a directory where any of them is missing or not executable
+# would leave git running no hook at all and the worker silently unguarded, so
+# export-env resolves through this check rather than printing the line blind.
+CHECKED_HOOKS='commit-msg pre-commit pre-push'
+
+require_hooks_installed() {  # prints the hooks directory, or names what is missing
+  local dir name missing=
+  dir=$(hooks_dir)
+  if [ ! -d "$dir" ]; then
+    echo "error: $SELF_NAME: hook directory $dir does not exist, so the guard cannot be armed" >&2
+    return 1
+  fi
+  for name in $CHECKED_HOOKS; do
+    [ -x "$dir/$name" ] || missing="${missing:+$missing }$name"
+  done
+  if [ -n "$missing" ]; then
+    echo "error: $SELF_NAME: $dir has no executable $missing hook, so arming core.hooksPath there would leave commits unchecked" >&2
+    return 1
+  fi
+  printf '%s\n' "$dir"
+}
+
 # Every other hook name git's own githooks documentation lists, so a project's
 # hooks keep running under core.hooksPath. See Known limits for the three names
 # deliberately absent from this set.
@@ -317,9 +344,33 @@ is_zero_sha() { case "$1" in *[!0]*) return 1 ;; *) return 0 ;; esac; }
 # be reported instead of silently dropping the oldest outgoing commits.
 MAX_OUTGOING_COMMITS=1000
 
+# What the push target already has, as arguments for `git rev-list --not`.
+# Local remote-tracking refs answer this without a round trip, but
+# `--remotes=<pattern>` is a glob over refs/remotes/ and matches NOTHING when the
+# target is a URL, a filesystem path, or a remote that has never been fetched.
+# The exclusion would then be empty and the entire history would count as
+# outgoing, so the guard would refuse a push over an ancestor the remote already
+# has and the worker never authored. Ask the remote itself in that case: one
+# ls-remote is bounded, and every ref it reports that this repository also has is
+# provably not being added by this push. An empty answer from a remote with no
+# refs is correct rather than a failure - everything really is new then.
+outgoing_exclusions() {  # <remote>; prints one rev-list argument per line
+  local remote=$1 refs sha
+  if [ -n "$(git for-each-ref --count=1 --format='%(refname)' "refs/remotes/$remote" 2>/dev/null)" ]; then
+    printf '%s\n' "--remotes=$remote"
+    return 0
+  fi
+  refs=$(git ls-remote "$remote" 2>/dev/null) || return 1
+  while read -r sha _; do
+    [ -n "$sha" ] || continue
+    git cat-file -e "${sha}^{commit}" 2>/dev/null && printf '%s\n' "$sha"
+  done <<< "$refs"
+  return 0
+}
+
 run_pre_push() {  # <remote-name>; reads git's ref lines on file descriptor 0
-  local remote=$1 local_sha remote_sha rev range probe count
-  local revs=()
+  local remote=$1 local_sha remote_sha rev range probe count exclusions line
+  local revs=() args=()
   probe=$((MAX_OUTGOING_COMMITS + 1))
   # git's ref line is "<local ref> <local sha> <remote ref> <remote sha>"; only
   # the two shas bound the outgoing range.
@@ -329,7 +380,20 @@ run_pre_push() {  # <remote-name>; reads git's ref lines on file descriptor 0
     if [ -n "${remote_sha:-}" ] && ! is_zero_sha "$remote_sha"; then
       range=$(git rev-list "--max-count=$probe" "$remote_sha..$local_sha" 2>/dev/null) || range=
     else
-      range=$(git rev-list "--max-count=$probe" "$local_sha" --not "--remotes=$remote" 2>/dev/null) || range=
+      args=("--max-count=$probe" "$local_sha")
+      if exclusions=$(outgoing_exclusions "$remote"); then
+        if [ -n "$exclusions" ]; then
+          args+=(--not)
+          while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            args+=("$line")
+          done <<< "$exclusions"
+        fi
+      else
+        printf 'firstmate: %s could not ask %s which commits it already has, so every commit on this ref is checked and a refusal may name one the remote already carries\n' \
+          "$SELF_NAME" "$remote" >&2
+      fi
+      range=$(git rev-list "${args[@]}" 2>/dev/null) || range=
     fi
     count=0
     while IFS= read -r rev; do
@@ -378,8 +442,9 @@ case "${1:-}" in
   check-commits) shift; [ "$#" -gt 0 ] || { usage >&2; exit 2; }; check_commits "$@" ;;
   hooks-dir) hooks_dir ;;
   export-env)
+    GUARD_HOOKS_DIR=$(require_hooks_installed) || exit 1
     printf 'export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=%s\n' \
-      "$(hooks_dir | sed "s/'/'\\\\''/g; s/^/'/; s/\$/'/")"
+      "$(printf '%s\n' "$GUARD_HOOKS_DIR" | sed "s/'/'\\\\''/g; s/^/'/; s/\$/'/")"
     ;;
   *) usage >&2; exit 2 ;;
 esac

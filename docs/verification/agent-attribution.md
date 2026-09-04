@@ -60,6 +60,7 @@ ok - fm-attribution-guard: agent co-author trailer refuses the commit
 ok - fm-attribution-guard: a second harness's co-author trailer refuses the commit
 ok - fm-attribution-guard: a human co-author still commits
 ok - fm-attribution-guard: a human whose name is also a product name still commits
+ok - fm-attribution-guard: a human whose name contains an agent token still commits
 ok - fm-attribution-guard: a session link refuses the commit
 ok - fm-attribution-guard: a generated-with credit refuses the commit
 ok - fm-attribution-guard: ordinary generated-with wording still commits
@@ -73,6 +74,10 @@ ok - fm-attribution-guard: an already-tracked agent path stays maintainable
 ok - fm-attribution-guard: ordinary wording naming a model vendor still commits
 ok - fm-attribution-guard: an evil merge adding CLAUDE.md is refused at push
 ok - fm-attribution-guard: a project's unchecked hooks still run
+ok - fm-attribution-guard: a push by path is judged only on what it adds
+ok - fm-attribution-guard: a push to a never-fetched remote is judged only on what it adds
+ok - fm-attribution-guard: a push by path still refuses a commit it adds
+ok - fm-attribution-guard: export-env refuses a hooks directory git would find empty
 ok - fm-attribution-guard: a clean branch still pushes
 ok - fm-attribution-guard: enforcement comes from the arming, not from the repository
 ```

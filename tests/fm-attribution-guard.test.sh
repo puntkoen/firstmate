@@ -90,6 +90,27 @@ Co-authored-by: Claude Dupont <claude.dupont@example.fr>" ||
   pass "fm-attribution-guard: a human whose name is also a product name still commits"
 }
 
+# The tier split exists so real people keep committing, and an unanchored token
+# refuses them: `aider` sits inside Raider, `codex` inside Codexis.
+test_humans_whose_names_contain_agent_tokens_are_accepted() {
+  local repo
+  repo=$(new_repo human-substrings)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  git -C "$repo" commit -qm "feat: add a
+
+Co-authored-by: Jan Raider <jan@raiderstech.com>" ||
+    fail "a human named Raider was refused"
+  printf 'more\n' > "$repo/b.txt"
+  git -C "$repo" add b.txt
+  git -C "$repo" commit -qm "feat: add b
+
+Co-authored-by: Ana Codexis <ana@codexis.com>" ||
+    fail "a human named Codexis was refused"
+  [ "$(head_subject "$repo")" = "feat: add b" ] || fail "the second human co-author commit did not land"
+  pass "fm-attribution-guard: a human whose name contains an agent token still commits"
+}
+
 test_session_link_commit_is_refused() {
   local repo out
   repo=$(new_repo session-link)
@@ -354,6 +375,90 @@ SH
   pass "fm-attribution-guard: a project's unchecked hooks still run"
 }
 
+# `--remotes=<pattern>` is a glob over refs/remotes/ and matches nothing for a
+# filesystem path or a never-fetched remote name, which used to make the whole
+# history outgoing and refuse the push over an ancestor the remote already has.
+seed_tainted_history() {  # <name>; echoes "<repo> <remote>"
+  local repo remote
+  repo=$(new_repo "$1")
+  remote="$TMP_ROOT/$1.git"
+  git init -q --bare "$remote"
+  printf 'old\n' > "$repo/old.txt"
+  unarmed_git -C "$repo" add old.txt
+  unarmed_git -C "$repo" commit -qm "chore: historical work
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>" ||
+    fail "could not seed a tainted ancestor"
+  unarmed_git -C "$repo" push -q "$remote" HEAD:refs/heads/main || fail "seed push failed"
+  printf '%s %s\n' "$repo" "$remote"
+}
+
+test_push_to_a_path_remote_ignores_ancestors_the_remote_has() {
+  local repo remote out
+  read -r repo remote <<< "$(seed_tainted_history path-remote)"
+  unarmed_git -C "$repo" checkout -qb feature
+  printf 'new\n' > "$repo/new.txt"
+  git -C "$repo" add new.txt
+  git -C "$repo" commit -qm "feat: clean work" || fail "the clean commit was refused"
+  out=$(git -C "$repo" push "$remote" HEAD:refs/heads/feature 2>&1) ||
+    fail "a clean push to a filesystem-path remote was refused over an ancestor the remote already has: $out"
+  [ "$(git -C "$remote" log -1 --format=%s refs/heads/feature)" = "feat: clean work" ] ||
+    fail "the clean commit did not reach the remote"
+  pass "fm-attribution-guard: a push by path is judged only on what it adds"
+}
+
+test_push_to_a_never_fetched_remote_ignores_ancestors_the_remote_has() {
+  local repo remote out
+  read -r repo remote <<< "$(seed_tainted_history named-remote)"
+  unarmed_git -C "$repo" remote add gate "$remote"
+  [ -z "$(git -C "$repo" for-each-ref --format='%(refname)' refs/remotes/gate)" ] ||
+    fail "the fixture remote already has tracking refs, so it does not exercise the case"
+  unarmed_git -C "$repo" checkout -qb feature
+  printf 'new\n' > "$repo/new.txt"
+  git -C "$repo" add new.txt
+  git -C "$repo" commit -qm "feat: clean work" || fail "the clean commit was refused"
+  out=$(git -C "$repo" push gate HEAD:refs/heads/feature 2>&1) ||
+    fail "a clean push to a never-fetched named remote was refused over an ancestor: $out"
+  [ "$(git -C "$remote" log -1 --format=%s refs/heads/feature)" = "feat: clean work" ] ||
+    fail "the clean commit did not reach the remote"
+  pass "fm-attribution-guard: a push to a never-fetched remote is judged only on what it adds"
+}
+
+# A commit the push genuinely adds must still be caught in that same shape.
+test_push_to_a_path_remote_still_refuses_a_new_tainted_commit() {
+  local repo remote out
+  read -r repo remote <<< "$(seed_tainted_history path-remote-tainted)"
+  unarmed_git -C "$repo" checkout -qb feature
+  printf 'new\n' > "$repo/new.txt"
+  git -C "$repo" add new.txt
+  git -C "$repo" commit -q --no-verify -m "feat: new work
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>" ||
+    fail "the fixture commit did not land"
+  out=$(git -C "$repo" push "$remote" HEAD:refs/heads/feature 2>&1) &&
+    fail "a newly added tainted commit was accepted"
+  assert_contains "$out" "outgoing commit carries agent attribution" \
+    "the push refusal did not name the outgoing commit"
+  pass "fm-attribution-guard: a push by path still refuses a commit it adds"
+}
+
+# Arming core.hooksPath at a directory git finds no hooks in would leave the
+# worker silently unguarded, so resolving the arming must fail instead.
+test_export_env_refuses_a_hooks_dir_without_the_checked_hooks() {
+  local stage out rc=0
+  stage="$TMP_ROOT/bare-hooks/bin"
+  mkdir -p "$stage/git-hooks"
+  cp "$ROOT/bin/fm-attribution-guard.sh" "$stage/fm-attribution-guard.sh"
+  chmod +x "$stage/fm-attribution-guard.sh"
+  out=$("$stage/fm-attribution-guard.sh" export-env 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "export-env printed an arming line for a directory with no hooks: $out"
+  assert_contains "$out" "commit-msg" "the failure did not name the missing hooks"
+  case "$out" in
+    *GIT_CONFIG_KEY_0*) fail "export-env printed an arming line despite failing" ;;
+  esac
+  pass "fm-attribution-guard: export-env refuses a hooks directory git would find empty"
+}
+
 test_clean_push_is_accepted() {
   local repo remote
   repo=$(new_repo clean-push)
@@ -391,6 +496,7 @@ test_agent_coauthor_commit_is_refused
 test_codex_coauthor_commit_is_refused
 test_human_coauthor_commit_is_accepted
 test_human_named_claude_is_accepted
+test_humans_whose_names_contain_agent_tokens_are_accepted
 test_session_link_commit_is_refused
 test_generated_with_commit_is_refused
 test_ordinary_generated_wording_is_accepted
@@ -404,5 +510,9 @@ test_tracked_agent_path_stays_maintainable
 test_ordinary_vendor_wording_is_accepted
 test_evil_merge_adding_claude_md_is_refused_at_push
 test_project_pass_through_hooks_still_run
+test_push_to_a_path_remote_ignores_ancestors_the_remote_has
+test_push_to_a_never_fetched_remote_ignores_ancestors_the_remote_has
+test_push_to_a_path_remote_still_refuses_a_new_tainted_commit
+test_export_env_refuses_a_hooks_dir_without_the_checked_hooks
 test_clean_push_is_accepted
 test_unarmed_repo_is_not_enforced

@@ -505,6 +505,32 @@ test_git_project_tracked_pointer_is_refused() {
 # The shape this whole boundary exists for: a project that committed a real
 # CLAUDE.md. The refusal must fire before the promote path moves that file, so
 # the repository is left exactly as it was found.
+# The rollback and bin/fm-spawn.sh's exclude_path write the same shared file from
+# parallel workers. Holding the repository's exclude lock while a concurrent
+# entry is appended proves the rollback cannot take that entry with it.
+test_exclude_rollback_keeps_a_concurrent_entry() {
+  local repo excl lock pid rc=0
+  repo=$(new_git_project git-exclude-concurrency)
+  printf '!CLAUDE.md\n' > "$repo/.gitignore"
+  # shellcheck source=bin/fm-git-exclude-lib.sh
+  . "$ROOT/bin/fm-git-exclude-lib.sh"
+  excl=$(fm_git_exclude_file "$repo") || fail "could not resolve the repository's exclude file"
+  lock="$excl.fm-lock"
+  fm_lock_acquire_wait "$lock" || fail "could not take the exclude lock"
+  "$ROOT/bin/fm-ensure-agents-md.sh" "$repo" >/dev/null 2>&1 &
+  pid=$!
+  mkdir -p "$(dirname "$excl")"
+  printf '/.claude/settings.local.json\n' >> "$excl"
+  fm_lock_release "$lock"
+  wait "$pid" || rc=$?
+  [ "$rc" -ne 0 ] || fail "the unignorable pointer was not refused"
+  grep -qxF '/.claude/settings.local.json' "$excl" ||
+    fail "the rollback discarded a concurrent writer's entry: $(cat "$excl")"
+  grep -qxF '/CLAUDE.md' "$excl" &&
+    fail "the refused run left its own entry behind"
+  pass "fm-ensure-agents-md.sh: a rollback keeps a concurrent writer's exclude entry"
+}
+
 test_git_project_tracked_non_pointer_claude_is_refused_intact() {
   local repo out rc=0 status_after
   repo=$(new_git_project git-tracked-real-claude)
@@ -550,3 +576,4 @@ test_git_project_existing_gitignore_is_respected
 test_git_project_unignorable_pointer_is_refused
 test_git_project_tracked_pointer_is_refused
 test_git_project_tracked_non_pointer_claude_is_refused_intact
+test_exclude_rollback_keeps_a_concurrent_entry
