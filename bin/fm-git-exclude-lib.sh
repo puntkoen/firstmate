@@ -53,6 +53,7 @@ fm_git_exclude_add() {  # <work-dir> <entry>
     fi
     if [ "$rc" -eq 0 ]; then
       if printf '%s\n' "$entry" >> "$excl"; then
+        # shellcheck disable=SC2034 # Consumed by sourcing callers (bin/fm-ensure-agents-md.sh ensure_claude_ignored).
         FM_GIT_EXCLUDE_ADDED=1
       else
         rc=1
