@@ -19,6 +19,16 @@ assert_claude_pointer() {
 EOF
 }
 
+# A worker must never be told to take a file the project committed back out of
+# it, in any spelling.
+assert_no_untrack_advice() {  # <output>
+  case "$1" in
+    *"rm --cached"*|*"git rm "*|*"stop tracking"*)
+      fail "the run told a worker to untrack a file the project committed: $1"
+      ;;
+  esac
+}
+
 write_fixture_claude_pointer() {
   cat > "$1/CLAUDE.md" <<'EOF'
 <!-- Points Claude at AGENTS.md via import; edit AGENTS.md, not this file. -->
@@ -570,9 +580,10 @@ test_git_project_unignorable_pointer_is_refused() {
   pass "fm-ensure-agents-md.sh: refuses to write a pointer git will not ignore and rolls its entry back"
 }
 
-# git check-ignore consults the index, so a tracked CLAUDE.md can never be made
-# ignorable. This is the shape a project is left in by `git rm` on the file.
-test_git_project_tracked_pointer_is_refused() {
+# A tracked CLAUDE.md whose working file was removed is still the repository's
+# own file, so the run leaves git's view of it exactly as it found it rather than
+# writing the path back or asking for it to be untracked.
+test_git_project_tracked_pointer_removed_from_the_worktree_is_kept() {
   local repo out rc=0 before after
   repo=$(new_git_project git-tracked-pointer)
   printf '# project memory\n' > "$repo/AGENTS.md"
@@ -580,15 +591,35 @@ test_git_project_tracked_pointer_is_refused() {
   git -C "$repo" add AGENTS.md CLAUDE.md
   git -C "$repo" commit -qm seed || fail "fixture commit failed"
   rm -- "$repo/CLAUDE.md"
-  before=$(git -C "$repo" status --porcelain)
+  before=$(git -C "$repo" status --porcelain -- CLAUDE.md)
   out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) || rc=$?
-  after=$(git -C "$repo" status --porcelain)
-  [ "$rc" -ne 0 ] || fail "the pointer was written into a repo that tracks CLAUDE.md"
-  assert_contains "$out" "tracked" "refusal did not name tracking as the problem"
-  assert_contains "$out" "git rm --cached" "refusal did not name a remedy that can work"
+  after=$(git -C "$repo" status --porcelain -- CLAUDE.md)
+  [ "$rc" -eq 0 ] || fail "a tracked CLAUDE.md made the run fail: $out"
+  assert_no_untrack_advice "$out"
+  assert_contains "$out" "tracked CLAUDE.md" "the run did not report what it left alone"
   assert_absent "$repo/CLAUDE.md" "a tracked, committable CLAUDE.md was written back"
-  [ "$before" = "$after" ] || fail "the refused run changed the repository: $after"
-  pass "fm-ensure-agents-md.sh: refuses the pointer when CLAUDE.md is tracked"
+  [ "$before" = "$after" ] || fail "the run changed git's view of CLAUDE.md: $after"
+  pass "fm-ensure-agents-md.sh: a tracked pointer missing from the worktree is left to git"
+}
+
+# The older installer wrote a CLAUDE.md symlink, so projects migrated by it carry
+# a tracked symlink today. Replacing it would be this script rewriting a file the
+# project committed on purpose.
+test_git_project_tracked_symlink_pointer_is_kept() {
+  local repo out rc=0
+  repo=$(new_git_project git-tracked-symlink)
+  printf '# project memory\n' > "$repo/AGENTS.md"
+  ln -s AGENTS.md "$repo/CLAUDE.md"
+  git -C "$repo" add -A
+  git -C "$repo" commit -qm seed || fail "fixture commit failed"
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "a tracked CLAUDE.md symlink made the run fail: $out"
+  assert_no_untrack_advice "$out"
+  [ -L "$repo/CLAUDE.md" ] || fail "the tracked CLAUDE.md symlink was replaced"
+  [ "$(readlink "$repo/CLAUDE.md")" = "AGENTS.md" ] || fail "the tracked symlink was retargeted"
+  assert_grep "## Maintaining this file" "$repo/AGENTS.md" \
+    "the run skipped the AGENTS.md work it can still do"
+  pass "fm-ensure-agents-md.sh: a tracked CLAUDE.md symlink is left as it is"
 }
 
 # The shape this whole boundary exists for: a project that committed a real
@@ -620,7 +651,7 @@ test_exclude_rollback_keeps_a_concurrent_entry() {
   pass "fm-ensure-agents-md.sh: a rollback keeps a concurrent writer's exclude entry"
 }
 
-test_git_project_tracked_non_pointer_claude_is_refused_intact() {
+test_git_project_tracked_non_pointer_claude_is_kept_intact() {
   local repo out rc=0 status_after
   repo=$(new_git_project git-tracked-real-claude)
   printf '# Project memory\n\nRun tests with make test.\n' > "$repo/CLAUDE.md"
@@ -628,16 +659,17 @@ test_git_project_tracked_non_pointer_claude_is_refused_intact() {
   git -C "$repo" commit -qm seed || fail "fixture commit failed"
   out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) || rc=$?
   status_after=$(git -C "$repo" status --porcelain)
-  [ "$rc" -ne 0 ] || fail "a repo with a committed CLAUDE.md was silently promoted"
-  assert_contains "$out" "tracked" "refusal did not name tracking as the problem"
-  [ -z "$status_after" ] || fail "the refused run left a half-applied state: $status_after"
-  assert_absent "$repo/AGENTS.md" "the refused run created AGENTS.md"
-  cmp -s "$repo/CLAUDE.md" - <<'EOF' || fail "the committed CLAUDE.md was modified by a refused run"
+  [ "$rc" -eq 0 ] || fail "a repo with a committed CLAUDE.md made the run fail: $out"
+  assert_no_untrack_advice "$out"
+  assert_contains "$out" "kept:" "the run did not report what it left alone"
+  [ -z "$status_after" ] || fail "the run changed the repository: $status_after"
+  assert_absent "$repo/AGENTS.md" "a skeleton was written beside the project's own memory file"
+  cmp -s "$repo/CLAUDE.md" - <<'EOF' || fail "the project's committed memory file was rewritten"
 # Project memory
 
 Run tests with make test.
 EOF
-  pass "fm-ensure-agents-md.sh: a committed CLAUDE.md is refused with nothing changed"
+  pass "fm-ensure-agents-md.sh: a committed CLAUDE.md keeps its own content"
 }
 
 
@@ -667,6 +699,7 @@ test_git_project_kept_pointer_is_ignored
 test_git_project_tracked_canonical_pointer_is_kept
 test_git_project_tracked_pointer_without_agents_md_is_kept
 test_git_project_unignorable_pointer_is_refused
-test_git_project_tracked_pointer_is_refused
-test_git_project_tracked_non_pointer_claude_is_refused_intact
+test_git_project_tracked_pointer_removed_from_the_worktree_is_kept
+test_git_project_tracked_symlink_pointer_is_kept
+test_git_project_tracked_non_pointer_claude_is_kept_intact
 test_exclude_rollback_keeps_a_concurrent_entry

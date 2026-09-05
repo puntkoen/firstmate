@@ -86,9 +86,13 @@ ok - fm-attribution-guard: a clean branch still pushes
 ok - fm-attribution-guard: enforcement comes from the arming, not from the repository
 ```
 
-`tests/fm-spawn-attribution.test.sh` proves a real spawn delivers both layers, and `tests/fm-ensure-agents-md.test.sh` proves the `CLAUDE.md` pointer is never left committable.
+`tests/fm-spawn-attribution.test.sh` proves a real spawn delivers both layers, and `tests/fm-ensure-agents-md.test.sh` proves an UNTRACKED `CLAUDE.md` pointer is never left committable.
 That includes a pointer an earlier run already wrote, which the script now brings under the ignore rule instead of reporting unchanged.
-A pointer the repository already tracks is left exactly as it is, because that is the same already-tracked boundary the guard draws for the same file, and `bin/fm-git-tracked-lib.sh` is the one owner both scripts read it from.
+
+A `CLAUDE.md` the repository already tracks is out of scope for both layers, in every shape it takes: the pointer file, a symlink left by the older installer, and a real memory file with its own content are left byte-identical and only reported, and no message asks a worker to untrack one.
+That is deliberate and it is the same line the guard draws when it lets an already-tracked path be added, modified, and pushed; `bin/fm-git-tracked-lib.sh` is the one owner both scripts read it from.
+The residual gap is therefore stated rather than hidden: a project that deliberately committed a `CLAUDE.md` keeps it, and both layers keep letting it be changed and pushed.
+Only what the project does not carry yet is refused or excluded, which is the case the two leaks that started this work fell into.
 
 ## Arming, and what it deliberately does not touch
 

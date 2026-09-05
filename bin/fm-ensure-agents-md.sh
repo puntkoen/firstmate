@@ -20,17 +20,22 @@
 # the installer never creates a CLAUDE.md symlink.
 # The pointer is a REAL file in the project tree, so it is committable, and a
 # repo whose ignore list happened not to name it has committed it. Inside a git
-# work tree the pointer is therefore never written until the repo actually
-# ignores it: the local .git/info/exclude entry is added first and the result is
-# verified with git check-ignore, and a pointer that cannot be made ignorable is
-# refused rather than left where a commit can pick it up. That refusal is
-# resolved before anything is written, so a refused run leaves the working tree
-# and the index untouched. A pointer an earlier run already wrote reaches the
-# same decision, since a run that only reports it unchanged would otherwise walk
-# past the committable file it was built to prevent; a pointer the repository
-# already tracks is left exactly as it is, which is the boundary
-# bin/fm-attribution-guard.sh draws for the same file. AGENTS.md is written
-# either way - that name credits no vendor and is meant to be committed.
+# work tree an untracked pointer is therefore never written until the repo
+# actually ignores it: the local .git/info/exclude entry is added first and the
+# result is verified with git check-ignore, and a pointer that cannot be made
+# ignorable is refused rather than left where a commit can pick it up. That
+# refusal is resolved before anything is written, so a refused run leaves the
+# working tree and the index untouched. A pointer an earlier run already wrote
+# reaches the same decision, since a run that only reports it unchanged would
+# otherwise walk past the committable file it was built to prevent.
+# A CLAUDE.md the repository already tracks is the other side of that boundary
+# and is exempt in every shape it takes: this script then writes it, moves it,
+# and deletes it never, does the AGENTS.md work it safely can, reports what it
+# left alone, and exits 0. That is the same line bin/fm-attribution-guard.sh
+# draws when it lets an already-tracked path be modified and pushed, so a
+# project that committed its own CLAUDE.md on purpose keeps it and is never told
+# to untrack it. AGENTS.md is written either way - that name credits no vendor
+# and is meant to be committed.
 # bin/fm-attribution-guard.sh is the commit-time backstop for the same boundary.
 # Refuses a case-variant real memory file such as a lowercase agents.md, so the
 # pointer's @AGENTS.md import resolves to a real AGENTS.md on a case-sensitive
@@ -166,17 +171,18 @@ is_canonical_claude_pointer() {
 # linked worktree. docs/verification/agent-attribution.md records why this is
 # allowed where installing hook files there is not.
 #
-# Returns 1 when the path still is not ignored and 2 when CLAUDE.md is tracked,
-# which no ignore rule can fix; both are the caller's cue to refuse the write.
+# Returns 1 when the path still is not ignored and 2 when CLAUDE.md sits in the
+# index, which no ignore rule can fix; both are the caller's cue to refuse the
+# write. A path the repository already carries never reaches here, so the index
+# case left is a CLAUDE.md staged in this working copy and not yet committed.
 ensure_claude_ignored() {
   local prefix entry appended
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
   if git check-ignore -q "$CLAUDE" 2>/dev/null; then
     return 0
   fi
-  # git check-ignore consults the index, so a tracked path is never reported as
-  # ignored no matter what is excluded. That is the shape a project is left in by
-  # `git rm` while the blob stays in the index.
+  # git check-ignore consults the index, so a path in it is never reported as
+  # ignored no matter what is excluded.
   if git ls-files --error-unmatch -- "$CLAUDE" >/dev/null 2>&1; then
     return 2
   fi
@@ -191,11 +197,11 @@ ensure_claude_ignored() {
   return 1
 }
 
-# The pointer this repository committed on purpose is not what this boundary is
-# for. bin/fm-attribution-guard.sh leaves such a path addable, modifiable, and
+# What this repository committed on purpose is not what this boundary is for.
+# bin/fm-attribution-guard.sh leaves such a path addable, modifiable, and
 # pushable for the same reason, and both scripts read that from the one function
 # in bin/fm-git-tracked-lib.sh, so a project that deliberately maintains its own
-# pointer - firstmate itself does - is never told to stop tracking it. The path
+# CLAUDE.md - firstmate itself does - is never told to stop tracking it. The path
 # is named the way git names it, from the repository root, because this script
 # runs in any directory of the work tree.
 claude_pointer_is_tracked() {
@@ -205,29 +211,25 @@ claude_pointer_is_tracked() {
   fm_git_path_tracked_at "$head" "${prefix}${CLAUDE}"
 }
 
-# Owns the refusal wording for a pointer that cannot be kept out of a commit, and
-# the single place the ignorability decision is reached.
+# Owns the refusal wording for an untracked pointer that cannot be kept out of a
+# commit, and the single place the ignorability decision is reached.
 # Every branch below calls this BEFORE its first mutation, so a refusal leaves the
 # working tree and the index exactly as they were found rather than half-applied.
 # That includes the branches that find a canonical pointer already in place and
 # write no pointer at all: a pointer an earlier run left behind is a real,
 # committable file in exactly the way a fresh one would be, and skipping the
 # decision there would leave the most common installation as exposed as it was
-# before this rule existed. A canonical pointer the repository already tracks is
-# the one shape that needs nothing, since no exclude entry can change what is
-# already committed and nothing here should undo a deliberate choice.
+# before this rule existed. Nothing the repository already carries reaches here,
+# because keep_tracked_claude_as_is answers for that shape first.
 # install_claude_pointer calls it again, which is free because the check is
 # idempotent.
 require_claude_pointer_writable() {
   local ignore_rc=0
-  if is_canonical_claude_pointer && claude_pointer_is_tracked; then
-    return 0
-  fi
   ensure_claude_ignored || ignore_rc=$?
   case "$ignore_rc" in
     0) return 0 ;;
     2)
-      echo "error: CLAUDE.md is tracked in this repo ($DIR), so no ignore rule can keep the pointer out of a commit; stop tracking it with git rm --cached CLAUDE.md first (AGENTS.md is unaffected)" >&2
+      echo "error: CLAUDE.md is staged in this repo ($DIR) without being committed, so no ignore rule can keep the pointer out of a commit; take it back out of the index with git restore --staged CLAUDE.md first (AGENTS.md is unaffected)" >&2
       ;;
     *)
       echo "error: git will not ignore CLAUDE.md in $DIR, so writing the pointer would leave a committable agent file; add CLAUDE.md to this repo's ignore rules (AGENTS.md is unaffected)" >&2
@@ -299,6 +301,46 @@ fi
 if [ -e "$AGENTS" ] && [ ! -f "$AGENTS" ]; then
   echo "conflict: AGENTS.md exists in $DIR but is not a regular file" >&2
   exit 1
+fi
+
+# A CLAUDE.md this repository already carries is deliberate, so nothing below it
+# may write, move, or unlink that file, and no message may ask a worker to take
+# it out of the project. The AGENTS.md side of the run still happens, except
+# where the only way to reach it would be to change the tracked file: a real
+# memory file with its own content is left for a human to move, because a
+# skeleton beside it would split the project's memory in two and pointer content
+# on top of it would destroy that memory.
+claude_carries_own_memory() {
+  [ -e "$CLAUDE" ] || [ -L "$CLAUDE" ] || return 1
+  if [ -L "$CLAUDE" ]; then
+    is_correct_claude_symlink && return 1
+    return 0
+  fi
+  is_canonical_claude_pointer && return 1
+  return 0
+}
+
+keep_tracked_claude_as_is() {
+  if [ -e "$AGENTS" ]; then
+    ensure_maintenance_section
+    if [ "$MAINT_INJECTED" -eq 1 ]; then
+      echo "updated: added ## Maintaining this file to AGENTS.md and left the tracked CLAUDE.md as it is in $DIR"
+    else
+      echo "unchanged: AGENTS.md with the tracked CLAUDE.md left as it is in $DIR"
+    fi
+    exit 0
+  fi
+  if claude_carries_own_memory; then
+    echo "kept: CLAUDE.md is tracked in $DIR and was left exactly as it is; move its content into AGENTS.md yourself if this project should carry it under that name"
+    exit 0
+  fi
+  write_skeleton
+  echo "created: AGENTS.md and left the tracked CLAUDE.md as it is in $DIR"
+  exit 0
+}
+
+if claude_pointer_is_tracked; then
+  keep_tracked_claude_as_is
 fi
 
 if [ -e "$AGENTS" ]; then
