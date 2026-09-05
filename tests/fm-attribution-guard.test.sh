@@ -111,6 +111,33 @@ Co-authored-by: Ana Codexis <ana@codexis.com>" ||
   pass "fm-attribution-guard: a human whose name contains an agent token still commits"
 }
 
+# A vendor's own agent host is the bot signal Tier B needs; the two host lists
+# had drifted, so a co-author at claude.ai committed while the same host in a URL
+# was refused.
+test_agent_vendor_domain_coauthor_is_refused() {
+  local repo out
+  repo=$(new_repo vendor-domain-coauthor)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  out=$(git -C "$repo" commit -m "feat: add a
+
+Co-authored-by: Claude <claude@claude.ai>" 2>&1) &&
+    fail "a co-author at the vendor's own agent host was accepted"
+  assert_contains "$out" "co-author line naming an agent" "refusal did not name the co-author rule"
+  out=$(git -C "$repo" commit -m "feat: add a
+
+Co-authored-by: Gemini <gemini@gemini.google.com>" 2>&1) &&
+    fail "a co-author at a second vendor's agent host was accepted"
+  assert_contains "$out" "co-author line naming an agent" "refusal did not name the co-author rule"
+  [ "$(head_subject "$repo")" = "seed" ] || fail "a refused commit still landed"
+  git -C "$repo" commit -qm "feat: add a
+
+Co-authored-by: Koen de Vries <koen@example.nl>" ||
+    fail "a human co-author at a human address was refused"
+  [ "$(head_subject "$repo")" = "feat: add a" ] || fail "the human co-author commit did not land"
+  pass "fm-attribution-guard: a co-author at an agent vendor host refuses the commit"
+}
+
 test_session_link_commit_is_refused() {
   local repo out
   repo=$(new_repo session-link)
@@ -581,6 +608,7 @@ test_codex_coauthor_commit_is_refused
 test_human_coauthor_commit_is_accepted
 test_human_named_claude_is_accepted
 test_humans_whose_names_contain_agent_tokens_are_accepted
+test_agent_vendor_domain_coauthor_is_refused
 test_session_link_commit_is_refused
 test_generated_with_commit_is_refused
 test_ordinary_generated_wording_is_accepted

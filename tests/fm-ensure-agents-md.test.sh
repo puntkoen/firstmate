@@ -425,6 +425,22 @@ test_lowercase_agents_md_refuses_case_fragile_pointer() {
   pass "fm-ensure-agents-md.sh: refuses a case-variant lowercase agents.md (issue #389)"
 }
 
+# The script runs in plain directories too, where there is no repository to ask.
+# A git probe leaking a fatal onto stderr beside a success line reads as a
+# failure to a worker and to anything capturing the run.
+test_non_git_directory_run_is_silent_on_stderr() {
+  local dir out err rc=0
+  dir="$TMP_ROOT/plain-directory"
+  mkdir -p "$dir"
+  err="$TMP_ROOT/plain-directory.err"
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$dir" 2>"$err") || rc=$?
+  [ "$rc" -eq 0 ] || fail "the run failed outside a repository: $(cat "$err")"
+  assert_contains "$out" "created:" "the run outside a repository did not report a creation"
+  [ ! -s "$err" ] || fail "the run outside a repository wrote to stderr: $(cat "$err")"
+  assert_claude_pointer "$dir/CLAUDE.md"
+  pass "fm-ensure-agents-md.sh: a run outside a repository stays silent on stderr"
+}
+
 # The CLAUDE.md pointer is a real, committable file. In a git work tree it may
 # never be left where an ordinary `git add -A` can pick it up.
 new_git_project() {  # <name>
@@ -651,6 +667,29 @@ test_exclude_rollback_keeps_a_concurrent_entry() {
   pass "fm-ensure-agents-md.sh: a rollback keeps a concurrent writer's exclude entry"
 }
 
+# A project that tracks both a real AGENTS.md and a real CLAUDE.md carries two
+# memory files that can drift apart. Neither may be touched, and the run must
+# still say so rather than reporting the same success as a harmless pointer.
+test_git_project_tracked_memory_file_beside_agents_is_reported() {
+  local repo out rc=0
+  repo=$(new_git_project git-tracked-two-memories)
+  printf '# agents memory\n' > "$repo/AGENTS.md"
+  printf '# claude memory\n\nRun make build.\n' > "$repo/CLAUDE.md"
+  cp "$repo/AGENTS.md" "$repo/.agents-before"
+  cp "$repo/CLAUDE.md" "$repo/.claude-before"
+  git -C "$repo" add AGENTS.md CLAUDE.md
+  git -C "$repo" commit -qm seed || fail "fixture commit failed"
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "two tracked memory files made the run fail: $out"
+  assert_no_untrack_advice "$out"
+  assert_contains "$out" "second memory file" "the run did not report the divergence"
+  [ -z "$(git -C "$repo" status --porcelain -- AGENTS.md CLAUDE.md)" ] ||
+    fail "the run changed a tracked memory file: $(git -C "$repo" status --porcelain)"
+  cmp -s "$repo/.agents-before" "$repo/AGENTS.md" || fail "the run modified AGENTS.md"
+  cmp -s "$repo/.claude-before" "$repo/CLAUDE.md" || fail "the run modified CLAUDE.md"
+  pass "fm-ensure-agents-md.sh: two tracked memory files are reported, not touched"
+}
+
 test_git_project_tracked_non_pointer_claude_is_kept_intact() {
   local repo out rc=0 status_after
   repo=$(new_git_project git-tracked-real-claude)
@@ -691,6 +730,7 @@ test_agents_md_symlink_is_refused
 test_wrong_target_symlink_is_refused
 test_non_regular_claude_md_is_refused
 test_lowercase_agents_md_refuses_case_fragile_pointer
+test_non_git_directory_run_is_silent_on_stderr
 test_git_project_pointer_is_ignored
 test_git_project_ignore_entry_is_idempotent
 test_git_project_existing_gitignore_is_respected
@@ -702,4 +742,5 @@ test_git_project_unignorable_pointer_is_refused
 test_git_project_tracked_pointer_removed_from_the_worktree_is_kept
 test_git_project_tracked_symlink_pointer_is_kept
 test_git_project_tracked_non_pointer_claude_is_kept_intact
+test_git_project_tracked_memory_file_beside_agents_is_reported
 test_exclude_rollback_keeps_a_concurrent_entry

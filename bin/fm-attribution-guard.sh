@@ -97,7 +97,16 @@ EOF
 # and stay outside the anchored group so they keep matching as they always did.
 TIER_A_RE='(^|[^[:alnum:]])(anthropic|codex|chatgpt|openai|copilot|opencode|claude[ -]code|cursor[ -]?agent|gemini[ -]cli|devin|aider|windsurf|codewhisperer|tabnine|ai (assistant|agent|bot))([^[:alnum:]]|$)|gpt-[0-9]|\[bot\]'
 TIER_B_RE='(^|[^[:alnum:]])(claude|gemini|grok|kimi|jules|opus|sonnet|haiku|qwen|llama|mistral)([^[:alnum:]]|$)'
-BOT_SIGNAL_RE='noreply|no-reply|@(anthropic\.com|openai\.com|cursor\.com|x\.ai|xai\.com|moonshot\.(cn|ai)|deepmind\.com)|bot@|\[bot\]'
+# One owner for "this host only ever belongs to an agent vendor". The bot-signal
+# rule and the URL rule both read it, so a host added for one can never be
+# missing from the other: while they were two hand-kept lists, a co-author line
+# at claude.ai committed even though the same host in a URL was refused.
+AGENT_HOST_RE='claude\.ai|claude\.com|anthropic\.com|chatgpt\.com|chat\.openai\.com|cursor\.com|gemini\.google\.com|xai\.com|moonshot\.(cn|ai)|deepmind\.com'
+# openai.com and x.ai are the two hosts that answer the question differently per
+# context: mail from them is a vendor address, while the sites themselves also
+# serve pages that have nothing to do with an agent, so a URL needs the agent
+# product path before it counts.
+BOT_SIGNAL_RE='noreply|no-reply|@('"$AGENT_HOST_RE"'|openai\.com|x\.ai)|bot@|\[bot\]'
 COAUTHOR_RE='^[[:space:]]*co-?authored?-by:'
 # A session link is a trailer whose key ends in -Session whose value is a link
 # or whose line names an agent, or any URL on a host that only ever identifies
@@ -110,7 +119,7 @@ COAUTHOR_RE='^[[:space:]]*co-?authored?-by:'
 # token and AGENT_URL_RE refuses it a second time.
 SESSION_TRAILER_RE='^[[:space:]]*[a-z][a-z0-9_-]*-session:[[:space:]]*[^[:space:]]'
 SESSION_TRAILER_URL_RE='^[[:space:]]*[a-z][a-z0-9_-]*-session:[[:space:]]*[a-z][a-z0-9+.-]*://'
-AGENT_URL_RE='https?://[^[:space:]]*(claude\.ai|claude\.com|anthropic\.com|chatgpt\.com|chat\.openai\.com|openai\.com/codex|cursor\.com|gemini\.google\.com|x\.ai/grok)'
+AGENT_URL_RE='https?://[^[:space:]]*('"$AGENT_HOST_RE"'|openai\.com/codex|x\.ai/grok)'
 # The verbs are anchored on non-alphanumeric boundaries so `written by` does not
 # fire inside `rewritten by`, `overwritten by`, or `handwritten by`.
 CREDIT_RE='(^|[^[:alnum:]])(generated|created|authored|written|built|assisted) (with|by)([^[:alnum:]]|$)'

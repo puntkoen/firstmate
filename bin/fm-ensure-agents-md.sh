@@ -31,7 +31,9 @@
 # A CLAUDE.md the repository already tracks is the other side of that boundary
 # and is exempt in every shape it takes: this script then writes it, moves it,
 # and deletes it never, does the AGENTS.md work it safely can, reports what it
-# left alone, and exits 0. That is the same line bin/fm-attribution-guard.sh
+# left alone, and exits 0. A tracked CLAUDE.md that is a memory file of its own
+# rather than the pointer is reported as the divergence it is, so the second
+# memory file stays visible without this script touching either side of it. That is the same line bin/fm-attribution-guard.sh
 # draws when it lets an already-tracked path be modified and pushed, so a
 # project that committed its own CLAUDE.md on purpose keeps it and is never told
 # to untrack it. AGENTS.md is written either way - that name credits no vendor
@@ -206,7 +208,7 @@ ensure_claude_ignored() {
 # runs in any directory of the work tree.
 claude_pointer_is_tracked() {
   local head prefix
-  head=$(git rev-parse --verify --quiet HEAD) || head=
+  head=$(git rev-parse --verify --quiet HEAD 2>/dev/null) || head=
   prefix=$(git rev-parse --show-prefix 2>/dev/null) || prefix=
   fm_git_path_tracked_at "$head" "${prefix}${CLAUDE}"
 }
@@ -321,6 +323,14 @@ claude_carries_own_memory() {
 }
 
 keep_tracked_claude_as_is() {
+  if claude_carries_own_memory; then
+    if [ -e "$AGENTS" ]; then
+      echo "kept: the tracked CLAUDE.md in $DIR is not the @AGENTS.md pointer, so this project carries a second memory file beside AGENTS.md; both were left exactly as they are and only a human can reconcile what the two say"
+    else
+      echo "kept: CLAUDE.md is tracked in $DIR and was left exactly as it is; move its content into AGENTS.md yourself if this project should carry it under that name"
+    fi
+    exit 0
+  fi
   if [ -e "$AGENTS" ]; then
     ensure_maintenance_section
     if [ "$MAINT_INJECTED" -eq 1 ]; then
@@ -328,10 +338,6 @@ keep_tracked_claude_as_is() {
     else
       echo "unchanged: AGENTS.md with the tracked CLAUDE.md left as it is in $DIR"
     fi
-    exit 0
-  fi
-  if claude_carries_own_memory; then
-    echo "kept: CLAUDE.md is tracked in $DIR and was left exactly as it is; move its content into AGENTS.md yourself if this project should carry it under that name"
     exit 0
   fi
   write_skeleton

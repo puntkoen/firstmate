@@ -61,6 +61,7 @@ ok - fm-attribution-guard: a second harness's co-author trailer refuses the comm
 ok - fm-attribution-guard: a human co-author still commits
 ok - fm-attribution-guard: a human whose name is also a product name still commits
 ok - fm-attribution-guard: a human whose name contains an agent token still commits
+ok - fm-attribution-guard: a co-author at an agent vendor host refuses the commit
 ok - fm-attribution-guard: a session link refuses the commit
 ok - fm-attribution-guard: a generated-with credit refuses the commit
 ok - fm-attribution-guard: ordinary generated-with wording still commits
