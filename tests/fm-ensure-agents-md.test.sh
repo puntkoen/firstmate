@@ -638,9 +638,6 @@ test_git_project_tracked_symlink_pointer_is_kept() {
   pass "fm-ensure-agents-md.sh: a tracked CLAUDE.md symlink is left as it is"
 }
 
-# The shape this whole boundary exists for: a project that committed a real
-# CLAUDE.md. The refusal must fire before the promote path moves that file, so
-# the repository is left exactly as it was found.
 # The rollback and bin/fm-spawn.sh's exclude_path write the same shared file from
 # parallel workers. Holding the repository's exclude lock while a concurrent
 # entry is appended proves the rollback cannot take that entry with it.

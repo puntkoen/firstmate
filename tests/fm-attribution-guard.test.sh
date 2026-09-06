@@ -129,6 +129,11 @@ Co-authored-by: Claude <claude@claude.ai>" 2>&1) &&
 Co-authored-by: Gemini <gemini@gemini.google.com>" 2>&1) &&
     fail "a co-author at a second vendor's agent host was accepted"
   assert_contains "$out" "co-author line naming an agent" "refusal did not name the co-author rule"
+  out=$(git -C "$repo" commit -m "feat: add a
+
+Co-authored-by: Claude <claude@anthropic.com>" 2>&1) &&
+    fail "a co-author at a vendor's company host was accepted"
+  assert_contains "$out" "co-author line naming an agent" "refusal did not name the co-author rule"
   [ "$(head_subject "$repo")" = "seed" ] || fail "a refused commit still landed"
   git -C "$repo" commit -qm "feat: add a
 
@@ -230,8 +235,11 @@ test_vendor_reference_links_still_commit() {
   git -C "$repo" add a.txt
   git -C "$repo" commit -qm "docs: cite the vendor pages this decision rests on
 
-Background: https://deepmind.com/research/alphafold
-Pricing we compared: https://moonshot.ai/pricing and https://openai.com/pricing
+Background: https://www.anthropic.com/research/tracing-thoughts
+Pricing we compared: https://cursor.com/pricing and https://openai.com/pricing
+Hiring page: https://claude.com/careers
+Install docs: https://cursor.com/cli
+More background: https://deepmind.com/research/alphafold and https://moonshot.ai/pricing
 Company pages: https://xai.com/about and https://x.ai/news" ||
     fail "a commit citing ordinary vendor pages was refused"
   [ "$(head_subject "$repo")" = "docs: cite the vendor pages this decision rests on" ] ||
@@ -245,6 +253,9 @@ test_agent_product_links_are_refused() {
   printf 'work\n' > "$repo/a.txt"
   git -C "$repo" add a.txt
   for link in \
+    "https://claude.com/claude-code" \
+    "https://www.anthropic.com/share/01ABC" \
+    "https://cursor.com/conversation/01ABC" \
     "https://openai.com/codex/" \
     "https://x.ai/grok" \
     "https://kimi.moonshot.cn/chat/01ABC" \
@@ -271,6 +282,46 @@ Generated with Claude Code" 2>&1) && fail "commit with a generated-with credit w
   assert_contains "$out" "generated-with credit" "refusal did not name the generated-with rule"
   [ "$(head_subject "$repo")" = "seed" ] || fail "the refused commit still landed"
   pass "fm-attribution-guard: a generated-with credit refuses the commit"
+}
+
+# The byline a harness actually appends, verbatim. Its host is a company site
+# whose ordinary pages stay citable, so this proves the refusal does not rest on
+# the URL alone.
+test_harness_footer_is_refused() {
+  local repo out
+  repo=$(new_repo harness-footer)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  out=$(git -C "$repo" commit -m "feat: add a
+
+Generated with [Claude Code](https://claude.com/claude-code)" 2>&1) &&
+    fail "the harness byline was accepted"
+  assert_contains "$out" "generated-with credit" "refusal did not name the generated-with rule"
+  [ "$(head_subject "$repo")" = "seed" ] || fail "the refused commit still landed"
+  pass "fm-attribution-guard: the harness byline refuses the commit"
+}
+
+# A git trailer spells the same credit with a hyphen, so the rule reads both.
+test_hyphenated_credit_trailers_are_refused() {
+  local repo out
+  repo=$(new_repo hyphenated-credit)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  out=$(git -C "$repo" commit -m "feat: add a
+
+Generated-With: Claude Code" 2>&1) && fail "a hyphenated generated-with trailer was accepted"
+  assert_contains "$out" "generated-with credit" "refusal did not name the generated-with rule"
+  out=$(git -C "$repo" commit -m "feat: add a
+
+Assisted-By: Claude <noreply@anthropic.com>" 2>&1) && fail "a hyphenated assisted-by trailer was accepted"
+  assert_contains "$out" "generated-with credit" "refusal did not name the generated-with rule"
+  [ "$(head_subject "$repo")" = "seed" ] || fail "a refused commit still landed"
+  git -C "$repo" commit -qm "feat: add a
+
+Reviewed-by: Jane Doe <jane@example.com>" ||
+    fail "an ordinary hyphenated trailer was refused"
+  [ "$(head_subject "$repo")" = "feat: add a" ] || fail "the human trailer commit did not land"
+  pass "fm-attribution-guard: a hyphenated credit trailer refuses the commit"
 }
 
 # A plain sentence about code generation is not attribution.
@@ -676,6 +727,8 @@ test_session_link_on_a_coauthor_line_is_refused
 test_vendor_reference_links_still_commit
 test_agent_product_links_are_refused
 test_generated_with_commit_is_refused
+test_harness_footer_is_refused
+test_hyphenated_credit_trailers_are_refused
 test_ordinary_generated_wording_is_accepted
 test_ordinary_session_wording_is_accepted
 test_session_trailer_with_a_link_value_is_refused

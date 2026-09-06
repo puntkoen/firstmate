@@ -98,14 +98,18 @@ EOF
 TIER_A_RE='(^|[^[:alnum:]])(anthropic|codex|chatgpt|openai|copilot|opencode|claude[ -]code|cursor[ -]?agent|gemini[ -]cli|devin|aider|windsurf|codewhisperer|tabnine|ai (assistant|agent|bot))([^[:alnum:]]|$)|gpt-[0-9]|\[bot\]'
 TIER_B_RE='(^|[^[:alnum:]])(claude|gemini|grok|kimi|jules|opus|sonnet|haiku|qwen|llama|mistral)([^[:alnum:]]|$)'
 # The hosts of an agent vendor, in the two shapes the rules below need.
-# Transcript hosts serve nothing but an agent conversation or that agent's own
-# product page, so any URL on one of them is attribution. Mixed hosts belong to
-# the same vendors but also carry pricing, research, careers, and company pages
-# an ordinary commit may legitimately cite, so a URL on one of them is only
+# A transcript host serves the agent conversation itself and nothing else, so
+# any URL on one of them is attribution. A mixed host belongs to the same
+# vendors but is also their company site, carrying pricing, research, careers,
+# install and documentation pages an ordinary commit may legitimately cite - this
+# repository's own bootstrap points at one of them - so a URL there is only
 # attribution when its path names the agent product or a shared conversation.
-AGENT_TRANSCRIPT_HOST_RE='claude\.ai|claude\.com|anthropic\.com|chatgpt\.com|chat\.openai\.com|cursor\.com|gemini\.google\.com'
-AGENT_MIXED_HOST_RE='openai\.com|x\.ai|xai\.com|moonshot\.(cn|ai)|deepmind\.com'
-AGENT_PRODUCT_PATH_RE='/(codex|grok|kimi|session|sessions|share|shared|chat|chats|conversation|conversations|transcript|transcripts)([^[:alnum:]]|$)'
+# The product-path list is deliberately short: a path is only listed when it can
+# mean nothing but the agent, and an ambiguous one is left out and disclosed in
+# docs/verification/agent-attribution.md rather than refusing a real commit.
+AGENT_TRANSCRIPT_HOST_RE='claude\.ai|chatgpt\.com|chat\.openai\.com|gemini\.google\.com'
+AGENT_MIXED_HOST_RE='anthropic\.com|claude\.com|cursor\.com|openai\.com|x\.ai|xai\.com|moonshot\.(cn|ai)|deepmind\.com'
+AGENT_PRODUCT_PATH_RE='/(claude-code|codex|grok|kimi|session|sessions|share|shared|chat|chats|conversation|conversations|transcript|transcripts)([^[:alnum:]]|$)'
 # One owner for "mail from this host is a vendor address". Both host shapes count
 # there, because no human's personal mail lives at any of them, and the bot-signal
 # rule and the URL rule read the same lists: while they were two hand-kept ones, a
@@ -128,8 +132,13 @@ SESSION_TRAILER_RE='^[[:space:]]*[a-z][a-z0-9_-]*-session:[[:space:]]*[^[:space:
 SESSION_TRAILER_URL_RE='^[[:space:]]*[a-z][a-z0-9_-]*-session:[[:space:]]*[a-z][a-z0-9+.-]*://'
 AGENT_URL_RE='https?://[^[:space:]]*('"$AGENT_TRANSCRIPT_HOST_RE"')|https?://[^[:space:]]*('"$AGENT_MIXED_HOST_RE"')[^[:space:]]*'"$AGENT_PRODUCT_PATH_RE"
 # The verbs are anchored on non-alphanumeric boundaries so `written by` does not
-# fire inside `rewritten by`, `overwritten by`, or `handwritten by`.
-CREDIT_RE='(^|[^[:alnum:]])(generated|created|authored|written|built|assisted) (with|by)([^[:alnum:]]|$)'
+# fire inside `rewritten by`, `overwritten by`, or `handwritten by`. A hyphen
+# counts where a space does, because `Generated-With:` is the git-trailer
+# spelling of the same credit and a harness that ships it must be covered on the
+# day it ships. A trailer key alone still refuses nobody: this rule needs the
+# same evidence the co-author rule needs, so `Reviewed-by: Jane Doe` and
+# `Co-authored-by: Claude Dupont <claude.dupont@example.fr>` keep committing.
+CREDIT_RE='(^|[^[:alnum:]])(generated|created|authored|written|built|assisted)[ -](with|by)([^[:alnum:]]|$)'
 
 # Agent memory and agent configuration paths. CLAUDE.md is the concrete leak
 # this guard was built for: bin/fm-ensure-agents-md.sh writes one into every

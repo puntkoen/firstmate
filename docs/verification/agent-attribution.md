@@ -50,7 +50,7 @@ The two developer messages it selects between are `Codex commit and pull request
 No `config.toml` key selects either; the workspace setting does.
 This is precisely the case the refusal layer exists for.
 
-## Refusal, verified 2026-09-04
+## Refusal, verified 2026-09-06
 
 `tests/fm-attribution-guard.test.sh` is the reusable proof and drives real commits and pushes rather than inspecting the guard's source.
 
@@ -67,6 +67,8 @@ ok - fm-attribution-guard: a session link on a co-author line refuses the commit
 ok - fm-attribution-guard: ordinary links to a vendor's own site still commit
 ok - fm-attribution-guard: an agent product or conversation link refuses the commit
 ok - fm-attribution-guard: a generated-with credit refuses the commit
+ok - fm-attribution-guard: the harness byline refuses the commit
+ok - fm-attribution-guard: a hyphenated credit trailer refuses the commit
 ok - fm-attribution-guard: ordinary generated-with wording still commits
 ok - fm-attribution-guard: ordinary -session: wording still commits
 ok - fm-attribution-guard: a session trailer whose value is a link refuses the commit
@@ -89,6 +91,12 @@ ok - fm-attribution-guard: export-env refuses a hooks directory git would find e
 ok - fm-attribution-guard: a clean branch still pushes
 ok - fm-attribution-guard: enforcement comes from the arming, not from the repository
 ```
+
+A URL rule that reads only the host cannot tell a vendor's agent transcript from that vendor's careers page, so the hosts are split and the split is a disclosed limit rather than a claim of completeness.
+Any URL on a transcript host such as `claude.ai` or `chatgpt.com` is refused, while a host that is also the vendor's company site - `anthropic.com`, `claude.com`, `cursor.com`, `openai.com`, `x.ai`, `xai.com`, `moonshot.cn`, `moonshot.ai`, `deepmind.com` - is refused only when the path names the agent product or a shared conversation.
+An agent product page on one of those hosts whose path is not in that short list therefore passes the URL rule, which is the deliberate price of keeping ordinary reference links committable: this repository's own `bin/fm-bootstrap.sh` cites `https://cursor.com/cli`, and install, pricing, research and careers pages are not attribution.
+The token and credit rules still cover such a line whenever it names an agent, which is what refuses the harness byline `Generated with [Claude Code](https://claude.com/claude-code)` independently of its link.
+Every one of those domains keeps its full strength as a mail domain, so a co-author address at any of them is refused.
 
 `tests/fm-spawn-attribution.test.sh` proves a real spawn delivers both layers, and `tests/fm-ensure-agents-md.test.sh` proves an UNTRACKED `CLAUDE.md` pointer is never left committable.
 That includes a pointer an earlier run already wrote, which the script now brings under the ignore rule instead of reporting unchanged.
