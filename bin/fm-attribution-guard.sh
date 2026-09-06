@@ -68,6 +68,12 @@
 #     typed into a message by hand therefore hides what follows it from that
 #     first gate; the pre-push pass reads the recorded message, where such a
 #     line is ordinary text, and refuses it before anything leaves the machine.
+#   - A transcript trailer is recognised by a key ending in -Session,
+#     -Transcript, -Conversation, -Thread or -Chat, with or without a -Url
+#     suffix. A key with no such ending - a bare `Session:` or `Transcript:` -
+#     is left alone on purpose, so a human linking an internal debugging
+#     session still commits; such a line is refused only when it names an agent
+#     or its link is on an agent host.
 #   - The pre-push pass checks at most 1000 outgoing commits per ref, newest
 #     first, and says on stderr when a push exceeds that.
 #   - push-to-checkout, proc-receive, and fsmonitor-watchman have no
@@ -109,6 +115,8 @@ EOF
 # sight. Tier B is a product name that is also a human given name, so it is
 # refused only together with a bot signal on the same line. That split is what
 # keeps a real human co-author working, which is the whole reason it exists.
+# A vendor address is the third way a line names an agent, and it needs no token
+# at all: see AGENT_ADDRESS_RE.
 # Both token lists are anchored on non-alphanumeric boundaries so a token only
 # matches as a whole word: `aider` must not fire inside a person named Raider,
 # nor `codex` inside Codexis. `gpt-[0-9]` and `[bot]` carry their own delimiters
@@ -137,6 +145,14 @@ AGENT_HOST_RE="$AGENT_TRANSCRIPT_HOST_RE"'|'"$AGENT_MIXED_HOST_RE"
 # counts the way `noreply@anthropic.com` does. The dot before the host is
 # required rather than optional text, because a host that merely ENDS in one of
 # these strings is somebody else's: `mailbox.ai` ends in `x.ai`.
+#
+# This is attribution on its own, with no token anywhere on the line, because of
+# the premise stated just above: no human's personal mail lives at one of these
+# hosts. While it counted only as a bot signal, a co-author line refused only
+# when the display name also carried a token, so `Co-authored-by: Composer
+# <noreply@cursor.com>` committed - the vendor whose harness has no suppression
+# control at all, which is the exact case this layer exists to answer for.
+# `users.noreply.github.com` is not a vendor host and is untouched by this.
 AGENT_ADDRESS_RE='@([^[:space:]>]*\.)?('"$AGENT_HOST_RE"')'
 # `noreply` on its own is not a bot signal. GitHub gives every account a private
 # <id>+<user>@users.noreply.github.com address and puts it in every co-author
@@ -181,8 +197,8 @@ comment_marker() {
   printf '%s' "$value"
 }
 COMMENT_MARKER=$(comment_marker)
-# A session link is a trailer whose key ends in -Session whose value is a link
-# or whose line names an agent, or an agent URL as AGENT_URL_RE defines one.
+# A session link is a transcript trailer whose value is a link or whose line
+# names an agent, or an agent URL as AGENT_URL_RE defines one.
 # Every line is put to every rule below, because one line can carry two
 # signatures at once: a session URL riding along on a co-author trailer used to
 # leave the message unscanned for the link. The value is what makes such a
@@ -192,9 +208,28 @@ COMMENT_MARKER=$(comment_marker)
 # the tier split exists to avoid. Nothing real is lost, because
 # `Claude-Session: https://claude.ai/code/session_...` carries both a link and a
 # token and AGENT_URL_RE refuses it a second time.
-SESSION_TRAILER_RE="$LINE_DECORATION_RE"'[a-z][a-z0-9_-]*-session:[[:space:]]*[^[:space:]]'
-SESSION_TRAILER_URL_RE="$LINE_DECORATION_RE"'[a-z][a-z0-9_-]*-session:[[:space:]]*[a-z][a-z0-9+.-]*://'
-AGENT_URL_RE='https?://[^[:space:]]*('"$AGENT_TRANSCRIPT_HOST_RE"')|https?://[^[:space:]]*('"$AGENT_MIXED_HOST_RE"')[^[:space:]]*'"$AGENT_PRODUCT_PATH_RE"
+#
+# A transcript trailer is the KEY set, not one spelling of it: the same link
+# rides on `-Session`, `-Transcript`, `-Conversation`, `-Thread`, `-Chat` and the
+# `-Url` suffix any of them may carry, and while only `-session:` was read,
+# `Assistant-Transcript: https://transcripts.example.internal/s/...` committed
+# whenever the transcript host was self-hosted or vendor-neutral. The value rule
+# is unchanged and is what keeps the narrowing safe: a bare `Session:` or
+# `Transcript:` key is not a transcript trailer at all, so a human linking an
+# internal debugging session still commits.
+SESSION_TRAILER_KEY_RE="$LINE_DECORATION_RE"'[a-z][a-z0-9_-]*-(session|transcript|conversation|thread|chat)(-url)?:'
+SESSION_TRAILER_RE="$SESSION_TRAILER_KEY_RE"'[[:space:]]*[^[:space:]]'
+SESSION_TRAILER_URL_RE="$SESSION_TRAILER_KEY_RE"'[[:space:]]*[a-z][a-z0-9+.-]*://'
+# The authority a URL's host sits in: the scheme, any userinfo, and any
+# subdomains, each of which must end in a dot. The host is anchored there for the
+# reason the address rule anchors on `@`: a name that merely ENDS in one of these
+# strings is somebody else's, and a path segment that spells one is not a host at
+# all, so `https://docs.example.com/mailbox.ai/chat/1` is an ordinary link. The
+# trailing boundary rejects alphanumerics and hyphens only, so a port, a path, a
+# fully qualified trailing dot and end-of-line all still close the host while
+# `claude.aire.example.com` no longer opens with one.
+AGENT_URL_AUTHORITY_RE='https?://([^[:space:]/?#]*@)?([^[:space:]/?#]*\.)?'
+AGENT_URL_RE="$AGENT_URL_AUTHORITY_RE"'('"$AGENT_TRANSCRIPT_HOST_RE"')([^[:alnum:]-]|$)|'"$AGENT_URL_AUTHORITY_RE"'('"$AGENT_MIXED_HOST_RE"')([^[:alnum:]-][^[:space:]]*)?'"$AGENT_PRODUCT_PATH_RE"
 # The verbs are anchored on non-alphanumeric boundaries so `written by` does not
 # fire inside `rewritten by`, `overwritten by`, or `handwritten by`. A hyphen
 # counts where a space does, because `Generated-With:` is the git-trailer
@@ -250,6 +285,9 @@ agent_path_reason() {  # <path>; prints a reason and returns 0 when the path is 
 names_an_agent() {  # <line>
   local text=$1
   if [[ $text =~ $TIER_A_RE ]]; then
+    return 0
+  fi
+  if [[ $text =~ $AGENT_ADDRESS_RE ]]; then
     return 0
   fi
   if [[ $text =~ $TIER_B_RE ]] && [[ $text =~ $BOT_SIGNAL_RE ]]; then

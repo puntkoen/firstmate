@@ -84,6 +84,18 @@ MUST_REFUSE=(
   "Co-authored-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
   "Co-authored-by: Claude <noreply@mail.anthropic.com>"
   "Co-authored-by: Claude <claude-bot@example.com>"
+  "Co-authored-by: Cursor <noreply@cursor.com>"
+  "Co-authored-by: Composer <noreply@cursor.com>"
+  "Co-authored-by: Assistant <noreply@x.ai>"
+  "Co-authored-by: Bard <noreply@deepmind.com>"
+  "Co-authored-by: Someone <noreply@moonshot.ai>"
+  "Assistant-Transcript: https://transcripts.example.internal/s/01DEDS82"
+  "Claude-Session-Url: https://transcripts.example.internal/s/01DEDS82"
+  "Agent-Conversation: https://transcripts.example.internal/c/01DEDS82"
+  "Worker-Thread: https://transcripts.example.internal/t/01DEDS82"
+  "Assistant-Chat: https://transcripts.example.internal/x/01DEDS82"
+  "- Assistant-Transcript: https://transcripts.example.internal/s/01DEDS82"
+  "Claude-Transcript: transcript_01DEDS82"
 )
 MUST_COMMIT=(
   "Co-authored-by: Jane Doe <jane@example.com>"
@@ -113,6 +125,13 @@ MUST_COMMIT=(
   "Compare https://openai.com/pricing before deciding."
   "Co-authored-by: Claude Dupont <1234+cdupont@users.noreply.github.com>"
   "Co-authored-by: Opus Jansen <9+ojansen@users.noreply.github.com>"
+  "Co-authored-by: Rik Mailbox <rik@mailbox.ai>"
+  "user-transcript: renders the wrong speaker after the merge"
+  "support-thread: the customer reported it twice"
+  "Session: https://sessions.example.internal/s/01DEDS82"
+  "Transcript: https://transcripts.example.internal/s/01DEDS82"
+  "See https://docs.example.com/mailbox.ai/chat/1"
+  "See https://claude.aire.example.com/news"
 )
 
 test_every_ruled_message_shape_keeps_its_verdict() {
@@ -464,6 +483,46 @@ Co-authored-by: Koen de Vries <koen@example.nl>" ||
   pass "fm-attribution-guard: a co-author at an agent vendor host refuses the commit"
 }
 
+# The vendor address is evidence on its own. While it counted only as a bot
+# signal the line still needed a token, so every vendor whose product name is in
+# neither token list - Cursor's Composer above all, the harness with no
+# suppression control at all - committed its own byline.
+test_vendor_address_alone_refuses_a_coauthor_line() {
+  local repo out line
+  repo=$(new_repo vendor-address-alone)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  for line in \
+    "Co-authored-by: Cursor <noreply@cursor.com>" \
+    "Co-authored-by: Composer <noreply@cursor.com>" \
+    "Co-authored-by: Assistant <noreply@x.ai>" \
+    "Co-authored-by: Bard <noreply@deepmind.com>" \
+    "Co-authored-by: Someone <noreply@moonshot.ai>"; do
+    out=$(git -C "$repo" commit -m "feat: add a
+
+$line" 2>&1) && fail "a co-author at a vendor host with no token was accepted: $line"
+    assert_contains "$out" "co-author line naming an agent" "refusal did not name the co-author rule for $line"
+  done
+  out=$(git -C "$repo" commit -m "feat: add a
+
+Co-authored-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>" 2>&1) &&
+    fail "widening the address rule stopped refusing a GitHub bot"
+  [ "$(head_subject "$repo")" = "seed" ] || fail "a refused commit still landed"
+  git -C "$repo" commit -qm "feat: add a
+
+Co-authored-by: Claude Dupont <1234+cdupont@users.noreply.github.com>" ||
+    fail "a human at GitHub's private address was refused by the address rule"
+  [ "$(head_subject "$repo")" = "feat: add a" ] || fail "the GitHub co-author commit did not land"
+  printf 'more\n' >> "$repo/a.txt"
+  git -C "$repo" add a.txt
+  git -C "$repo" commit -qm "feat: extend a
+
+Co-authored-by: Rik Mailbox <rik@mailbox.ai>" ||
+    fail "a human at a host that merely ends in a vendor host was refused"
+  [ "$(head_subject "$repo")" = "feat: extend a" ] || fail "the mailbox.ai co-author commit did not land"
+  pass "fm-attribution-guard: an agent vendor address alone refuses the co-author line"
+}
+
 test_session_link_commit_is_refused() {
   local repo out
   repo=$(new_repo session-link)
@@ -522,6 +581,53 @@ Claude-Session: session_01DEDS82wWQt5RcjtK6pANJB" 2>&1) &&
   assert_contains "$out" "session link" "refusal did not name the session-link rule"
   [ "$(head_subject "$repo")" = "seed" ] || fail "the refused commit still landed"
   pass "fm-attribution-guard: a session trailer naming an agent refuses the commit without a link"
+}
+
+# The same transcript link rides on more than one key. While only `-session:`
+# was read, moving it to `Assistant-Transcript:` walked it straight past the
+# rule whenever the transcript host was self-hosted or vendor-neutral.
+test_every_transcript_trailer_key_is_refused() {
+  local repo out line
+  repo=$(new_repo transcript-trailer-keys)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  for line in \
+    "Assistant-Transcript: https://transcripts.example.internal/s/01DEDS82" \
+    "Claude-Session-Url: https://transcripts.example.internal/s/01DEDS82" \
+    "Agent-Conversation: https://transcripts.example.internal/c/01DEDS82" \
+    "Worker-Thread: https://transcripts.example.internal/t/01DEDS82" \
+    "Assistant-Chat: https://transcripts.example.internal/x/01DEDS82" \
+    "Claude-Transcript: transcript_01DEDS82"; do
+    out=$(git -C "$repo" commit -m "feat: add a
+
+$line" 2>&1) && fail "a transcript trailer was accepted: $line"
+    assert_contains "$out" "session link" "refusal did not name the session-link rule for $line"
+  done
+  [ "$(head_subject "$repo")" = "seed" ] || fail "a refused commit still landed"
+  pass "fm-attribution-guard: every transcript trailer key refuses the commit"
+}
+
+# The key set is what widened, not the value rule. A bare `Session:` or
+# `Transcript:` key is not a transcript trailer, so a human linking an internal
+# debugging session keeps committing, and ordinary wording under a hyphenated
+# key still needs a link or a token before anything is refused.
+test_human_transcript_wording_and_bare_keys_are_accepted() {
+  local repo
+  repo=$(new_repo transcript-human-wording)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  git -C "$repo" commit -qm "fix: shorten the cookie lifetime
+
+user-transcript: renders the wrong speaker after the merge
+support-thread: the customer reported it twice
+Session: https://sessions.example.internal/s/01DEDS82
+Transcript: https://transcripts.example.internal/s/01DEDS82" ||
+    fail "a human's own session and transcript references were refused"
+  [ "$(head_subject "$repo")" = "fix: shorten the cookie lifetime" ] ||
+    fail "the human transcript-wording commit did not land"
+  git -C "$repo" log -1 --format=%B | grep -q "sessions.example.internal" ||
+    fail "the human's own session link was lost"
+  pass "fm-attribution-guard: a human's own session and transcript lines still commit"
 }
 
 # A line can carry two signatures at once. The co-author rule does not refuse a
@@ -590,6 +696,39 @@ See $link" 2>&1) && fail "a link to an agent product page was accepted: $link"
   done
   [ "$(head_subject "$repo")" = "seed" ] || fail "a refused commit still landed"
   pass "fm-attribution-guard: an agent product or conversation link refuses the commit"
+}
+
+# The URL rule anchors its host in the URL's authority, the way the address rule
+# anchors on `@`. Without that a vendor host matched anywhere in the URL, so an
+# unrelated path segment and a longer host that merely opens with one were both
+# refused.
+test_url_host_is_anchored_in_the_authority() {
+  local repo out
+  repo=$(new_repo url-host-anchor)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  git -C "$repo" commit -qm "docs: link the internal mail runbook
+
+See https://docs.example.com/mailbox.ai/chat/1
+And https://claude.aire.example.com/news" ||
+    fail "a link whose host merely contains a vendor host was refused"
+  [ "$(head_subject "$repo")" = "docs: link the internal mail runbook" ] ||
+    fail "the anchored-host commit did not land"
+  printf 'more\n' >> "$repo/a.txt"
+  git -C "$repo" add a.txt
+  out=$(git -C "$repo" commit -m "feat: extend a
+
+See https://cursor.com/chat/1" 2>&1) &&
+    fail "anchoring the host stopped refusing a real agent conversation link"
+  assert_contains "$out" "session link" "refusal did not name the session-link rule"
+  out=$(git -C "$repo" commit -m "feat: extend a
+
+See https://claude.ai/code/session_01ABC" 2>&1) &&
+    fail "anchoring the host stopped refusing a transcript host"
+  assert_contains "$out" "session link" "refusal did not name the session-link rule"
+  [ "$(head_subject "$repo")" = "docs: link the internal mail runbook" ] ||
+    fail "a refused commit still landed"
+  pass "fm-attribution-guard: a URL's host is judged in its authority, not anywhere in the URL"
 }
 
 test_generated_with_commit_is_refused() {
@@ -1102,10 +1241,12 @@ test_bots_at_a_github_private_address_are_refused
 test_env_names_covers_every_name_export_env_assigns
 test_humans_whose_names_contain_agent_tokens_are_accepted
 test_agent_vendor_domain_coauthor_is_refused
+test_vendor_address_alone_refuses_a_coauthor_line
 test_session_link_commit_is_refused
 test_session_link_on_a_coauthor_line_is_refused
 test_vendor_reference_links_still_commit
 test_agent_product_links_are_refused
+test_url_host_is_anchored_in_the_authority
 test_generated_with_commit_is_refused
 test_harness_footer_is_refused
 test_hyphenated_credit_trailers_are_refused
@@ -1116,6 +1257,8 @@ test_ordinary_generated_wording_is_accepted
 test_ordinary_session_wording_is_accepted
 test_session_trailer_with_a_link_value_is_refused
 test_session_trailer_naming_an_agent_is_refused
+test_every_transcript_trailer_key_is_refused
+test_human_transcript_wording_and_bare_keys_are_accepted
 test_claude_md_commit_is_refused
 test_claude_dir_commit_is_refused
 test_agents_md_commit_is_accepted

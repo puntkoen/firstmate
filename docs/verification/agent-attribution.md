@@ -72,10 +72,12 @@ ok - fm-attribution-guard: a bot at GitHub's private address is still refused
 ok - fm-attribution-guard: env-names names exactly what export-env assigns
 ok - fm-attribution-guard: a human whose name contains an agent token still commits
 ok - fm-attribution-guard: a co-author at an agent vendor host refuses the commit
+ok - fm-attribution-guard: an agent vendor address alone refuses the co-author line
 ok - fm-attribution-guard: a session link refuses the commit
 ok - fm-attribution-guard: a session link on a co-author line refuses the commit
 ok - fm-attribution-guard: ordinary links to a vendor's own site still commit
 ok - fm-attribution-guard: an agent product or conversation link refuses the commit
+ok - fm-attribution-guard: a URL's host is judged in its authority, not anywhere in the URL
 ok - fm-attribution-guard: a generated-with credit refuses the commit
 ok - fm-attribution-guard: the harness byline refuses the commit
 ok - fm-attribution-guard: a hyphenated credit trailer refuses the commit
@@ -86,6 +88,8 @@ ok - fm-attribution-guard: ordinary generated-with wording still commits
 ok - fm-attribution-guard: ordinary -session: wording still commits
 ok - fm-attribution-guard: a session trailer whose value is a link refuses the commit
 ok - fm-attribution-guard: a session trailer naming an agent refuses the commit without a link
+ok - fm-attribution-guard: every transcript trailer key refuses the commit
+ok - fm-attribution-guard: a human's own session and transcript lines still commit
 ok - fm-attribution-guard: adding CLAUDE.md refuses the commit
 ok - fm-attribution-guard: adding .claude/ refuses the commit
 ok - fm-attribution-guard: AGENTS.md still commits
@@ -120,7 +124,14 @@ A URL rule that reads only the host cannot tell a vendor's agent transcript from
 Any URL on a transcript host such as `claude.ai` or `chatgpt.com` is refused, while a host that is also the vendor's company site - `anthropic.com`, `claude.com`, `cursor.com`, `openai.com`, `x.ai`, `xai.com`, `moonshot.cn`, `moonshot.ai`, `deepmind.com` - is refused only when the path names the agent product or a shared conversation.
 An agent product page on one of those hosts whose path is not in that short list therefore passes the URL rule, which is the deliberate price of keeping ordinary reference links committable: this repository's own `bin/fm-bootstrap.sh` cites `https://cursor.com/cli`, and install, pricing, research and careers pages are not attribution.
 The token and credit rules still cover such a line whenever it names an agent, which is what refuses the harness byline `Generated with [Claude Code](https://claude.com/claude-code)` independently of its link.
-Every one of those domains keeps its full strength as a mail domain, so a co-author address at any of them is refused, subdomains included: the address rule requires a dot before the vendor host so a domain that merely ends in one of those strings - `mailbox.ai` ends in `x.ai` - stays somebody else's.
+Every one of those domains keeps its full strength as a mail domain, so a co-author address at any of them is refused on its own, with no token anywhere on the line, subdomains included.
+That is the premise the shared host list rests on - no human's personal mail lives at one of those hosts - and while the address counted only as a bot signal the line still needed a token, so `Co-authored-by: Composer <noreply@cursor.com>` committed: the vendor whose harness has no suppression control at all, which is precisely the case this layer exists for.
+The host is anchored in both rules the same way, on the `@` for an address and on the URL's authority for a link, so a name that merely ends in or opens with one of those strings stays somebody else's - `mailbox.ai` ends in `x.ai`, `https://docs.example.com/mailbox.ai/chat/1` spells one in a path segment, and none of the three is refused.
+`users.noreply.github.com` is not a vendor host and is untouched by any of it.
+
+A transcript link is refused under a trailer key ending in `-Session`, `-Transcript`, `-Conversation`, `-Thread` or `-Chat`, with or without a `-Url` suffix, because the same link rides on all of them and while only `-session:` was read, `Assistant-Transcript: https://transcripts.example.internal/s/...` committed whenever the transcript host was self-hosted or vendor-neutral.
+What widened is the key set, not the value rule: such a trailer is still attribution only when its value is a link or its line names an agent.
+The remaining narrowing is stated rather than hidden: a key with no such ending - a bare `Session:` or `Transcript:` - is deliberately left alone so a human linking an internal debugging session still commits, and a line under one of those keys is refused only when it names an agent or its link is on an agent host.
 
 `noreply` on its own is not a bot signal, and that is a deliberate narrowing rather than an oversight.
 GitHub gives every account a private `<id>+<user>@users.noreply.github.com` address and puts it in every co-author trailer it generates - web UI, squash merge, co-author suggestion - so reading the word alone as evidence refused a real person whose given name happens to be a Tier B token, which is the one thing the tier split exists to prevent.
