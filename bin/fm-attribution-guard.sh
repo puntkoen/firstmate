@@ -55,6 +55,11 @@
 #     attribution line typed into an editor comment git would have dropped is
 #     refused too. That costs one re-edit, where the other way round costs the
 #     captain's ban.
+#   - The commit-msg pass stops reading at git's scissors marker, because
+#     everything below it is the verbose diff git discards. A scissors line
+#     typed into a message by hand therefore hides what follows it from that
+#     first gate; the pre-push pass reads the recorded message, where such a
+#     line is ordinary text, and refuses it before anything leaves the machine.
 #   - The pre-push pass checks at most 1000 outgoing commits per ref, newest
 #     first, and says on stderr when a push exceeds that.
 #   - push-to-checkout, proc-receive, and fsmonitor-watchman have no
@@ -127,7 +132,10 @@ BOT_SIGNAL_RE='noreply|no-reply|@('"$AGENT_HOST_RE"')|bot@|\[bot\]'
 # may carry is therefore owned once, and every trailer rule reads the key through
 # it. Nothing alphanumeric may precede the key, so `history: strip the
 # Co-authored-by trailers` is still ordinary prose rather than a trailer.
-LINE_DECORATION_RE='^[^[:alnum:]]*([0-9]+[.)][^[:alnum:]]*)?'
+# A bullet has to be followed by whitespace to count as one, because a diff line
+# begins with a bare `-` or `+` and the removal of a trailer is the opposite of
+# adding one.
+LINE_DECORATION_RE='^[[:space:]]*([-*>+][[:space:]]+|[0-9]+[.)][[:space:]]+)*'
 COAUTHOR_RE="$LINE_DECORATION_RE"'co-?authored?-by:'
 # A session link is a trailer whose key ends in -Session whose value is a link
 # or whose line names an agent, or an agent URL as AGENT_URL_RE defines one.
@@ -267,10 +275,40 @@ scan_message() {
   [ "$found" -eq 0 ]
 }
 
+# git's own scissors marker, built the way git builds it: from the repository's
+# comment character, falling back to git's default when that is unset or `auto`.
+# Only that exact line counts, not one that merely resembles it.
+scissors_line() {
+  local char
+  char=$(git config --get core.commentChar 2>/dev/null) || char=
+  case "$char" in
+    ?) ;;
+    *) char='#' ;;
+  esac
+  printf '%s ------------------------ >8 ------------------------\n' "$char"
+}
+
+# The commit-msg buffer down to git's scissors marker, which is the part of it
+# that can still become a commit message. `git commit -v` and
+# `--cleanup=scissors` put the staged diff below that marker and git discards it,
+# so judging it would refuse a commit for the text it is REMOVING - the captain's
+# own cleanup work reads as attribution when the diff is read as a message.
+message_before_scissors() {  # <marker>; copies file descriptor 0 up to it
+  local marker=$1 line
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ "$line" = "$marker" ]; then
+      return 0
+    fi
+    printf '%s\n' "$line"
+  done
+}
+
+# Process substitution, not a pipeline, so scan_message's reasons survive.
 check_message() {  # <file>
   [ -f "${1:-}" ] || { echo "error: no such commit message file: ${1:-}" >&2; exit 2; }
   REASONS=()
-  scan_message < "$1" || refuse "commit message carries agent attribution"
+  scan_message < <(message_before_scissors "$(scissors_line)" < "$1") ||
+    refuse "commit message carries agent attribution"
 }
 
 # --- path check -------------------------------------------------------------

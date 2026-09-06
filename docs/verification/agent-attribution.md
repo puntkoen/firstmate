@@ -59,6 +59,8 @@ $ bash tests/fm-attribution-guard.test.sh
 ok - fm-attribution-guard: every ruled message shape keeps its verdict
 ok - fm-attribution-guard: a decorated agent co-author trailer refuses the commit
 ok - fm-attribution-guard: a commented agent trailer refuses the commit
+ok - fm-attribution-guard: a verbose commit removing a trailer still commits
+ok - fm-attribution-guard: a trailer below a typed scissors line is refused at push
 ok - fm-attribution-guard: agent co-author trailer refuses the commit
 ok - fm-attribution-guard: a second harness's co-author trailer refuses the commit
 ok - fm-attribution-guard: a human co-author still commits
@@ -97,6 +99,11 @@ ok - fm-attribution-guard: export-env refuses a hooks directory git would find e
 ok - fm-attribution-guard: a clean branch still pushes
 ok - fm-attribution-guard: enforcement comes from the arming, not from the repository
 ```
+
+The commit-msg pass stops reading at git's scissors marker, because everything below it is the verbose diff `git commit -v` puts in the buffer and git discards.
+Reading it would refuse a commit for the text it removes, which is exactly the captain's own cleanup work on the trailers this control exists to ban.
+The residual is stated rather than hidden: a scissors line typed into a message by hand hides what follows it from the first gate, and the pre-push pass, which reads the recorded message where such a line is ordinary text, is what refuses it before anything leaves the machine.
+A bullet counts as trailer decoration only when whitespace follows it, so `- Co-authored-by:` is still read as the trailer it is while a diff's bare `-Co-Authored-By:` is not.
 
 Both message passes peel a leading `#` and judge what it hides, because `git commit -m` and `git commit -F` clean the message with `whitespace`, which keeps commentary, and only a message the author edits is cleaned with `strip`.
 A `#`-prefixed agent trailer therefore reaches history under `-m`, which is why the commit gate reads it rather than skipping it.

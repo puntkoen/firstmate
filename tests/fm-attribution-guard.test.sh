@@ -85,6 +85,8 @@ MUST_COMMIT=(
   "Reviewed-by: Jane Doe <jane@example.com>"
   "user-session: expires too early after the cookie change"
   "# Please enter the commit message for your changes."
+  "-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+  "+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
   "# Conflicts:"
   "the tokenizer was rewritten by hand to drop the llama dependency"
   "the table was overwritten by the migration"
@@ -140,6 +142,58 @@ test_decorated_coauthor_trailer_is_refused() {
     fail "a bulleted human co-author trailer was refused"
   [ "$(head_subject "$repo")" = "feat: add a" ] || fail "the human co-author commit did not land"
   pass "fm-attribution-guard: a decorated agent co-author trailer refuses the commit"
+}
+
+# `git commit -v` puts the staged diff in the buffer and git discards it below
+# the scissors marker, so removing an agent trailer from a file must not read as
+# adding one to the message.
+test_verbose_commit_removing_a_trailer_still_commits() {
+  local repo editor
+  repo=$(new_repo verbose-removal)
+  printf 'Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>\n' > "$repo/notes.md"
+  unarmed_git -C "$repo" add notes.md
+  unarmed_git -C "$repo" commit -qm "chore: add the agent trailer fixture" ||
+    fail "fixture commit failed"
+  git -C "$repo" rm -q notes.md
+  editor="$TMP_ROOT/verbose-removal-editor.sh"
+  cat > "$editor" <<'SH'
+#!/usr/bin/env bash
+printf 'chore: remove the agent trailer fixture\n%s\n' "$(cat "$1")" > "$1"
+SH
+  chmod +x "$editor"
+  GIT_EDITOR="$editor" git -C "$repo" commit -qv ||
+    fail "a verbose commit removing an agent trailer was refused"
+  [ "$(head_subject "$repo")" = "chore: remove the agent trailer fixture" ] ||
+    fail "the verbose commit did not land"
+  git -C "$repo" log -1 --format=%B | grep -q 'noreply@anthropic.com' &&
+    fail "git recorded the discarded diff into the message"
+  pass "fm-attribution-guard: a verbose commit removing a trailer still commits"
+}
+
+# The scissors stop is a disclosed hole in the first gate, and this is the pass
+# that closes it: the recorded message is final text, marker and all.
+test_scissors_line_typed_by_hand_is_caught_at_push() {
+  local repo remote out msg
+  repo=$(new_repo scissors-typed)
+  remote="$TMP_ROOT/scissors-typed.git"
+  git init -q --bare "$remote"
+  git -C "$repo" remote add origin "$remote"
+  unarmed_git -C "$repo" push -q origin HEAD:refs/heads/main || fail "seed push failed"
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  msg="$TMP_ROOT/scissors-typed.msg"
+  printf 'feat: add a\n\n# ------------------------ >8 ------------------------\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>\n' > "$msg"
+  git -C "$repo" commit -q -F "$msg" ||
+    fail "the commit gate refused below its own scissors stop, so the push case cannot be exercised"
+  git -C "$repo" log -1 --format=%B | grep -q 'noreply@anthropic.com' ||
+    fail "the trailer did not survive into the recorded message"
+  out=$(git -C "$repo" push origin HEAD:refs/heads/main 2>&1) &&
+    fail "pushing a message that hides an agent trailer below a typed scissors line was accepted"
+  assert_contains "$out" "outgoing commit carries agent attribution" \
+    "the push refusal did not name the outgoing commit"
+  [ "$(git -C "$remote" log -1 --format=%s refs/heads/main)" = "seed" ] ||
+    fail "the tainted commit reached the remote"
+  pass "fm-attribution-guard: a trailer below a typed scissors line is refused at push"
 }
 
 # `git commit -m` and `-F` clean with `whitespace`, which keeps a `#` line, so a
@@ -901,6 +955,8 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>" ||
 test_every_ruled_message_shape_keeps_its_verdict
 test_decorated_coauthor_trailer_is_refused
 test_commented_agent_trailer_is_refused_at_commit
+test_verbose_commit_removing_a_trailer_still_commits
+test_scissors_line_typed_by_hand_is_caught_at_push
 test_agent_coauthor_commit_is_refused
 test_codex_coauthor_commit_is_refused
 test_human_coauthor_commit_is_accepted
