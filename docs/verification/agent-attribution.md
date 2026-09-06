@@ -63,6 +63,9 @@ ok - fm-attribution-guard: a human whose name is also a product name still commi
 ok - fm-attribution-guard: a human whose name contains an agent token still commits
 ok - fm-attribution-guard: a co-author at an agent vendor host refuses the commit
 ok - fm-attribution-guard: a session link refuses the commit
+ok - fm-attribution-guard: a session link on a co-author line refuses the commit
+ok - fm-attribution-guard: ordinary links to a vendor's own site still commit
+ok - fm-attribution-guard: an agent product or conversation link refuses the commit
 ok - fm-attribution-guard: a generated-with credit refuses the commit
 ok - fm-attribution-guard: ordinary generated-with wording still commits
 ok - fm-attribution-guard: ordinary -session: wording still commits

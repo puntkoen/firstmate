@@ -97,20 +97,27 @@ EOF
 # and stay outside the anchored group so they keep matching as they always did.
 TIER_A_RE='(^|[^[:alnum:]])(anthropic|codex|chatgpt|openai|copilot|opencode|claude[ -]code|cursor[ -]?agent|gemini[ -]cli|devin|aider|windsurf|codewhisperer|tabnine|ai (assistant|agent|bot))([^[:alnum:]]|$)|gpt-[0-9]|\[bot\]'
 TIER_B_RE='(^|[^[:alnum:]])(claude|gemini|grok|kimi|jules|opus|sonnet|haiku|qwen|llama|mistral)([^[:alnum:]]|$)'
-# One owner for "this host only ever belongs to an agent vendor". The bot-signal
-# rule and the URL rule both read it, so a host added for one can never be
-# missing from the other: while they were two hand-kept lists, a co-author line
-# at claude.ai committed even though the same host in a URL was refused.
-AGENT_HOST_RE='claude\.ai|claude\.com|anthropic\.com|chatgpt\.com|chat\.openai\.com|cursor\.com|gemini\.google\.com|xai\.com|moonshot\.(cn|ai)|deepmind\.com'
-# openai.com and x.ai are the two hosts that answer the question differently per
-# context: mail from them is a vendor address, while the sites themselves also
-# serve pages that have nothing to do with an agent, so a URL needs the agent
-# product path before it counts.
-BOT_SIGNAL_RE='noreply|no-reply|@('"$AGENT_HOST_RE"'|openai\.com|x\.ai)|bot@|\[bot\]'
+# The hosts of an agent vendor, in the two shapes the rules below need.
+# Transcript hosts serve nothing but an agent conversation or that agent's own
+# product page, so any URL on one of them is attribution. Mixed hosts belong to
+# the same vendors but also carry pricing, research, careers, and company pages
+# an ordinary commit may legitimately cite, so a URL on one of them is only
+# attribution when its path names the agent product or a shared conversation.
+AGENT_TRANSCRIPT_HOST_RE='claude\.ai|claude\.com|anthropic\.com|chatgpt\.com|chat\.openai\.com|cursor\.com|gemini\.google\.com'
+AGENT_MIXED_HOST_RE='openai\.com|x\.ai|xai\.com|moonshot\.(cn|ai)|deepmind\.com'
+AGENT_PRODUCT_PATH_RE='/(codex|grok|kimi|session|sessions|share|shared|chat|chats|conversation|conversations|transcript|transcripts)([^[:alnum:]]|$)'
+# One owner for "mail from this host is a vendor address". Both host shapes count
+# there, because no human's personal mail lives at any of them, and the bot-signal
+# rule and the URL rule read the same lists: while they were two hand-kept ones, a
+# co-author line at claude.ai committed even though a URL on that host was refused.
+AGENT_HOST_RE="$AGENT_TRANSCRIPT_HOST_RE"'|'"$AGENT_MIXED_HOST_RE"
+BOT_SIGNAL_RE='noreply|no-reply|@('"$AGENT_HOST_RE"')|bot@|\[bot\]'
 COAUTHOR_RE='^[[:space:]]*co-?authored?-by:'
 # A session link is a trailer whose key ends in -Session whose value is a link
-# or whose line names an agent, or any URL on a host that only ever identifies
-# an agent transcript or agent product page. The value is what makes such a
+# or whose line names an agent, or an agent URL as AGENT_URL_RE defines one.
+# Every line is put to every rule below, because one line can carry two
+# signatures at once: a session URL riding along on a co-author trailer used to
+# leave the message unscanned for the link. The value is what makes such a
 # trailer attribution: an ordinary body line reading `user-session: expires too
 # early after the cookie change` links to nothing and names nobody, and refusing
 # it would block a human commit over wording, which is the same false positive
@@ -119,7 +126,7 @@ COAUTHOR_RE='^[[:space:]]*co-?authored?-by:'
 # token and AGENT_URL_RE refuses it a second time.
 SESSION_TRAILER_RE='^[[:space:]]*[a-z][a-z0-9_-]*-session:[[:space:]]*[^[:space:]]'
 SESSION_TRAILER_URL_RE='^[[:space:]]*[a-z][a-z0-9_-]*-session:[[:space:]]*[a-z][a-z0-9+.-]*://'
-AGENT_URL_RE='https?://[^[:space:]]*('"$AGENT_HOST_RE"'|openai\.com/codex|x\.ai/grok)'
+AGENT_URL_RE='https?://[^[:space:]]*('"$AGENT_TRANSCRIPT_HOST_RE"')|https?://[^[:space:]]*('"$AGENT_MIXED_HOST_RE"')[^[:space:]]*'"$AGENT_PRODUCT_PATH_RE"
 # The verbs are anchored on non-alphanumeric boundaries so `written by` does not
 # fire inside `rewritten by`, `overwritten by`, or `handwritten by`.
 CREDIT_RE='(^|[^[:alnum:]])(generated|created|authored|written|built|assisted) (with|by)([^[:alnum:]]|$)'
@@ -206,18 +213,15 @@ scan_message() {  # [strip-comments|verbatim]
       fi
       text=${text#"${BASH_REMATCH[0]}"}
     fi
-    if [[ $text =~ $COAUTHOR_RE ]]; then
-      if [[ $text =~ $TIER_A_RE ]] ||
-         { [[ $text =~ $TIER_B_RE ]] && [[ $text =~ $BOT_SIGNAL_RE ]]; }; then
-        add_reason "co-author line naming an agent: $line"
-        found=1
-      fi
-      continue
+    if [[ $text =~ $COAUTHOR_RE ]] &&
+       { [[ $text =~ $TIER_A_RE ]] ||
+         { [[ $text =~ $TIER_B_RE ]] && [[ $text =~ $BOT_SIGNAL_RE ]]; }; }; then
+      add_reason "co-author line naming an agent: $line"
+      found=1
     fi
     if is_session_link "$text"; then
       add_reason "session link: $line"
       found=1
-      continue
     fi
     if [[ $text =~ $CREDIT_RE ]] &&
        { [[ $text =~ $TIER_A_RE ]] ||

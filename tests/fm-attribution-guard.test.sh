@@ -198,6 +198,68 @@ Claude-Session: session_01DEDS82wWQt5RcjtK6pANJB" 2>&1) &&
   pass "fm-attribution-guard: a session trailer naming an agent refuses the commit without a link"
 }
 
+# A line can carry two signatures at once. The co-author rule does not refuse a
+# human co-author, and the session link riding along on that same line used to
+# ride past every other rule with it.
+test_session_link_on_a_coauthor_line_is_refused() {
+  local repo out
+  repo=$(new_repo coauthor-session-link)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  out=$(git -C "$repo" commit -m "feat: add a
+
+Co-authored-by: Jane Doe <jane@example.com> paired via https://claude.ai/code/session_01ABC" 2>&1) &&
+    fail "a session link sharing a line with a co-author trailer was accepted"
+  assert_contains "$out" "session link" "refusal did not name the session-link rule"
+  [ "$(head_subject "$repo")" = "seed" ] || fail "the refused commit still landed"
+  git -C "$repo" commit -qm "feat: add a
+
+Co-authored-by: Jane Doe <jane@example.com>" ||
+    fail "the same human co-author without a link was refused"
+  [ "$(head_subject "$repo")" = "feat: add a" ] || fail "the human co-author commit did not land"
+  pass "fm-attribution-guard: a session link on a co-author line refuses the commit"
+}
+
+# An agent vendor also runs pricing, research, and company pages. Citing one is
+# not attribution, while that vendor's agent product or a shared conversation on
+# the same host still is.
+test_vendor_reference_links_still_commit() {
+  local repo
+  repo=$(new_repo vendor-reference-links)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  git -C "$repo" commit -qm "docs: cite the vendor pages this decision rests on
+
+Background: https://deepmind.com/research/alphafold
+Pricing we compared: https://moonshot.ai/pricing and https://openai.com/pricing
+Company pages: https://xai.com/about and https://x.ai/news" ||
+    fail "a commit citing ordinary vendor pages was refused"
+  [ "$(head_subject "$repo")" = "docs: cite the vendor pages this decision rests on" ] ||
+    fail "the vendor-reference commit did not land"
+  pass "fm-attribution-guard: ordinary links to a vendor's own site still commit"
+}
+
+test_agent_product_links_are_refused() {
+  local repo out link
+  repo=$(new_repo agent-product-links)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  for link in \
+    "https://openai.com/codex/" \
+    "https://x.ai/grok" \
+    "https://kimi.moonshot.cn/chat/01ABC" \
+    "https://moonshot.ai/share/01ABC" \
+    "https://deepmind.com/conversation/01ABC" \
+    "https://xai.com/transcript/01ABC"; do
+    out=$(git -C "$repo" commit -m "feat: add a
+
+See $link" 2>&1) && fail "a link to an agent product page was accepted: $link"
+    assert_contains "$out" "session link" "refusal did not name the session-link rule for $link"
+  done
+  [ "$(head_subject "$repo")" = "seed" ] || fail "a refused commit still landed"
+  pass "fm-attribution-guard: an agent product or conversation link refuses the commit"
+}
+
 test_generated_with_commit_is_refused() {
   local repo out
   repo=$(new_repo generated-with)
@@ -610,6 +672,9 @@ test_human_named_claude_is_accepted
 test_humans_whose_names_contain_agent_tokens_are_accepted
 test_agent_vendor_domain_coauthor_is_refused
 test_session_link_commit_is_refused
+test_session_link_on_a_coauthor_line_is_refused
+test_vendor_reference_links_still_commit
+test_agent_product_links_are_refused
 test_generated_with_commit_is_refused
 test_ordinary_generated_wording_is_accepted
 test_ordinary_session_wording_is_accepted
