@@ -324,6 +324,55 @@ Reviewed-by: Jane Doe <jane@example.com>" ||
   pass "fm-attribution-guard: a hyphenated credit trailer refuses the commit"
 }
 
+# `authored-by` hides inside `co-authored-by`, so the credit rule would read a
+# sentence about cleaning those trailers up - the captain's own history work - as
+# a credit, and would name a second rule on every real agent trailer.
+test_wording_about_coauthor_trailers_is_accepted() {
+  local repo
+  repo=$(new_repo coauthor-wording)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  git -C "$repo" commit -qm "history: strip the Co-authored-by trailers Claude Code left behind" ||
+    fail "a sentence about co-authored-by trailers was refused"
+  [ "$(head_subject "$repo")" = "history: strip the Co-authored-by trailers Claude Code left behind" ] ||
+    fail "the wording commit did not land"
+  pass "fm-attribution-guard: wording about co-authored-by trailers still commits"
+}
+
+test_agent_coauthor_refusal_names_one_rule() {
+  local repo out
+  repo=$(new_repo coauthor-one-reason)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  out=$(git -C "$repo" commit -m "feat: add a
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>" 2>&1) &&
+    fail "the agent co-author trailer was accepted"
+  assert_contains "$out" "co-author line naming an agent" "refusal did not name the co-author rule"
+  case "$out" in
+    *"generated-with credit"*)
+      fail "the refusal named a rule the line has nothing to do with: $out"
+      ;;
+  esac
+  pass "fm-attribution-guard: an agent co-author trailer is refused by one rule"
+}
+
+# The hyphen still has to reach every other spelling of the credit.
+test_hyphen_prefixed_credit_wording_is_refused() {
+  local repo out line
+  repo=$(new_repo hyphen-credit-wording)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  for line in \
+    "chore: ship the auto-generated with Claude Code helper" \
+    "chore: the module was Co-generated with Claude Code"; do
+    out=$(git -C "$repo" commit -m "$line" 2>&1) && fail "a credit spelling was accepted: $line"
+    assert_contains "$out" "generated-with credit" "refusal did not name the generated-with rule for $line"
+  done
+  [ "$(head_subject "$repo")" = "seed" ] || fail "a refused commit still landed"
+  pass "fm-attribution-guard: a hyphen-prefixed credit verb still refuses the commit"
+}
+
 # A plain sentence about code generation is not attribution.
 test_ordinary_generated_wording_is_accepted() {
   local repo
@@ -729,6 +778,9 @@ test_agent_product_links_are_refused
 test_generated_with_commit_is_refused
 test_harness_footer_is_refused
 test_hyphenated_credit_trailers_are_refused
+test_wording_about_coauthor_trailers_is_accepted
+test_agent_coauthor_refusal_names_one_rule
+test_hyphen_prefixed_credit_wording_is_refused
 test_ordinary_generated_wording_is_accepted
 test_ordinary_session_wording_is_accepted
 test_session_trailer_with_a_link_value_is_refused

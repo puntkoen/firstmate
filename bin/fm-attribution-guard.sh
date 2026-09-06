@@ -139,6 +139,13 @@ AGENT_URL_RE='https?://[^[:space:]]*('"$AGENT_TRANSCRIPT_HOST_RE"')|https?://[^[
 # same evidence the co-author rule needs, so `Reviewed-by: Jane Doe` and
 # `Co-authored-by: Claude Dupont <claude.dupont@example.fr>` keep committing.
 CREDIT_RE='(^|[^[:alnum:]])(generated|created|authored|written|built|assisted)[ -](with|by)([^[:alnum:]]|$)'
+# `authored-by` sits inside `co-authored-by`, where the hyphen of `co-` is the
+# leading boundary, so the credit rule would read a co-author trailer - and any
+# sentence merely naming one - as a credit of its own. That one spelling is the
+# co-author rule's to judge, so it is taken out of the line before the credit
+# rule reads it, and nothing else is: `Co-generated with`, `auto-generated with`,
+# `Generated-With:` and `Assisted-By:` all still match.
+COAUTHOR_WORD_RE='(^|[^[:alnum:]])(co-?authored?-by)([^[:alnum:]]|$)'
 
 # Agent memory and agent configuration paths. CLAUDE.md is the concrete leak
 # this guard was built for: bin/fm-ensure-agents-md.sh writes one into every
@@ -173,6 +180,14 @@ agent_path_reason() {  # <path>; prints a reason and returns 0 when the path is 
 }
 
 # Owns which lines count as a session link, for both the message passes.
+is_credit_line() {  # <line>
+  local text=$1
+  while [[ $text =~ $COAUTHOR_WORD_RE ]]; do
+    text=${text/"${BASH_REMATCH[2]}"/ }
+  done
+  [[ $text =~ $CREDIT_RE ]]
+}
+
 is_session_link() {  # <line>
   local text=$1
   if [[ $text =~ $AGENT_URL_RE ]]; then
@@ -232,7 +247,7 @@ scan_message() {  # [strip-comments|verbatim]
       add_reason "session link: $line"
       found=1
     fi
-    if [[ $text =~ $CREDIT_RE ]] &&
+    if is_credit_line "$text" &&
        { [[ $text =~ $TIER_A_RE ]] ||
          { [[ $text =~ $TIER_B_RE ]] && [[ $text =~ $BOT_SIGNAL_RE ]]; }; }; then
       add_reason "generated-with credit: $line"

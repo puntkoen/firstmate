@@ -69,6 +69,9 @@ ok - fm-attribution-guard: an agent product or conversation link refuses the com
 ok - fm-attribution-guard: a generated-with credit refuses the commit
 ok - fm-attribution-guard: the harness byline refuses the commit
 ok - fm-attribution-guard: a hyphenated credit trailer refuses the commit
+ok - fm-attribution-guard: wording about co-authored-by trailers still commits
+ok - fm-attribution-guard: an agent co-author trailer is refused by one rule
+ok - fm-attribution-guard: a hyphen-prefixed credit verb still refuses the commit
 ok - fm-attribution-guard: ordinary generated-with wording still commits
 ok - fm-attribution-guard: ordinary -session: wording still commits
 ok - fm-attribution-guard: a session trailer whose value is a link refuses the commit
