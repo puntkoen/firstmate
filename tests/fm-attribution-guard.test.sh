@@ -98,6 +98,9 @@ MUST_REFUSE=(
   "Claude-Chat: chat_01DEDS82"
   "Support-thread: https://claude.ai/code/session_01ABC"
   "Live-chat: https://chatgpt.com/c/01ABC"
+  "Co-authored-by: Ana Silva <ana@openai.com.br>"
+  "See https://claude.ai.example.com/faq"
+  "See https://cursor.com.br/chat/1"
 )
 MUST_COMMIT=(
   "Co-authored-by: Jane Doe <jane@example.com>"
@@ -130,6 +133,7 @@ MUST_COMMIT=(
   "Co-authored-by: Rik Mailbox <rik@mailbox.ai>"
   "Co-authored-by: Jane Doe <jane@x.airtable.com>"
   "Co-authored-by: Dev Ops <dev@claude.community>"
+  "Co-authored-by: Ana Silva <ana@cursor.com.br>"
   "user-transcript: renders the wrong speaker after the merge"
   "support-thread: the customer reported it twice"
   "Slack-thread: https://acme.slack.com/archives/C123/p1700000"
@@ -764,6 +768,36 @@ See https://claude.ai/code/session_01ABC" 2>&1) &&
   pass "fm-attribution-guard: a URL's host is judged in its authority, not anywhere in the URL"
 }
 
+# The two rules' right-hand boundaries differ on the dot, and the deliverable
+# claimed they did not. A vendor host carried as a longer host's leading labels
+# is refused in a link and is an ordinary address in mail.
+test_link_and_address_boundaries_differ_on_the_dot() {
+  local repo out link
+  repo=$(new_repo boundary-asymmetry)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  for link in "https://claude.ai.example.com/faq" "https://cursor.com.br/chat/1"; do
+    out=$(git -C "$repo" commit -m "feat: add a
+
+See $link" 2>&1) && fail "a link carrying a vendor host as its leading labels was accepted: $link"
+    assert_contains "$out" "session link" "refusal did not name the session-link rule for $link"
+  done
+  [ "$(head_subject "$repo")" = "seed" ] || fail "a refused commit still landed"
+  git -C "$repo" commit -qm "feat: add a
+
+Co-authored-by: Ana Silva <ana@cursor.com.br>" ||
+    fail "the same name in an address was refused"
+  [ "$(head_subject "$repo")" = "feat: add a" ] || fail "the address-boundary commit did not land"
+  printf 'more\n' >> "$repo/a.txt"
+  git -C "$repo" add a.txt
+  out=$(git -C "$repo" commit -m "feat: extend a
+
+Co-authored-by: Ana Silva <ana@openai.com.br>" 2>&1) &&
+    fail "a host spelling a Tier A token was accepted"
+  assert_contains "$out" "co-author line naming an agent" "refusal did not name the co-author rule"
+  pass "fm-attribution-guard: the link and address host boundaries differ on the dot"
+}
+
 test_generated_with_commit_is_refused() {
   local repo out
   repo=$(new_repo generated-with)
@@ -1280,6 +1314,7 @@ test_session_link_on_a_coauthor_line_is_refused
 test_vendor_reference_links_still_commit
 test_agent_product_links_are_refused
 test_url_host_is_anchored_in_the_authority
+test_link_and_address_boundaries_differ_on_the_dot
 test_generated_with_commit_is_refused
 test_harness_footer_is_refused
 test_hyphenated_credit_trailers_are_refused

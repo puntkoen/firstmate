@@ -148,8 +148,11 @@ AGENT_HOST_RE="$AGENT_TRANSCRIPT_HOST_RE"'|'"$AGENT_MIXED_HOST_RE"
 # `mailbox.ai` ends in `x.ai` - and so is one that merely opens with it:
 # `x.airtable.com` opens with `x.ai` and `claude.community` with `claude.com`.
 # The trailing class excludes the dot as well as alphanumerics and hyphens, which
-# is what keeps `openai.com.br` a Brazilian domain, while `<...@cursor.com>`
+# is what keeps `cursor.com.br` a Brazilian domain, while `<...@cursor.com>`
 # closes on the `>` and an address at the end of a line closes on the line.
+# That boundary answers for this rule only. A host that spells a Tier A token -
+# `openai.com.br` does - is refused by the token rule wherever the address rule
+# lands, because a token is judged on the whole line and not on the host.
 #
 # This is attribution on its own, with no token anywhere on the line, because of
 # the premise stated just above: no human's personal mail lives at one of these
@@ -164,10 +167,12 @@ AGENT_ADDRESS_RE='@([^[:space:]>]*\.)?('"$AGENT_HOST_RE"')([^[:alnum:].-]|$)'
 # trailer it generates - web UI, squash merge, co-author suggestion - so reading
 # the word alone as evidence refused a real person whose given name happens to
 # be a Tier B token, which is the one thing the tier split exists to prevent.
-# The word still counts at a vendor host, through AGENT_ADDRESS_RE, and `bot@`
-# and `[bot]` are untouched, so GitHub's own `github-actions[bot]` keeps
-# refusing on the suffix its bots all carry.
-BOT_SIGNAL_RE="$AGENT_ADDRESS_RE"'|bot@|\[bot\]'
+# `bot@` and `[bot]` are untouched, so GitHub's own `github-actions[bot]` keeps
+# refusing on the suffix its bots all carry. A vendor host is deliberately not
+# one of these: it is attribution on its own in names_an_agent and never reaches
+# the Tier B branch this signal serves, so naming it here would be a second copy
+# of the host rule that could never run.
+BOT_SIGNAL_RE='bot@|\[bot\]'
 # A trailer is a trailer whatever punctuation a body puts in front of it. A
 # squash body, a release note, or a quoted mail lists trailers as `- `, `* `,
 # `> ` or `1. ` items, and anchoring the key at the very start of the line let an
@@ -241,6 +246,15 @@ CONVERSATION_TRAILER_RE="$LINE_DECORATION_RE"'[a-z][a-z0-9_-]*-(conversation|thr
 # trailing boundary rejects alphanumerics and hyphens only, so a port, a path, a
 # fully qualified trailing dot and end-of-line all still close the host while
 # `claude.aire.example.com` no longer opens with one.
+#
+# This boundary is deliberately NOT the address rule's: it admits the dot, so a
+# host that carries a whole vendor host as its own leading LABELS is refused.
+# `https://claude.ai.example.com/faq` and `https://cursor.com.br/chat/1` are
+# refused, where `ana@cursor.com.br` is an ordinary address. The two rules are
+# asymmetric on purpose - a link is the shape agent transcripts actually take,
+# and a vendor host followed by a dot in one is far likelier to be a redirector
+# or a mirror than somebody's mail - and the cost is disclosed in
+# docs/verification/agent-attribution.md rather than hidden.
 AGENT_URL_AUTHORITY_RE='https?://([^[:space:]/?#]*@)?([^[:space:]/?#]*\.)?'
 AGENT_URL_RE="$AGENT_URL_AUTHORITY_RE"'('"$AGENT_TRANSCRIPT_HOST_RE"')([^[:alnum:]-]|$)|'"$AGENT_URL_AUTHORITY_RE"'('"$AGENT_MIXED_HOST_RE"')([^[:alnum:]-][^[:space:]]*)?'"$AGENT_PRODUCT_PATH_RE"
 # The verbs are anchored on non-alphanumeric boundaries so `written by` does not

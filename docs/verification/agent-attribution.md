@@ -78,6 +78,7 @@ ok - fm-attribution-guard: a session link on a co-author line refuses the commit
 ok - fm-attribution-guard: ordinary links to a vendor's own site still commit
 ok - fm-attribution-guard: an agent product or conversation link refuses the commit
 ok - fm-attribution-guard: a URL's host is judged in its authority, not anywhere in the URL
+ok - fm-attribution-guard: the link and address host boundaries differ on the dot
 ok - fm-attribution-guard: a generated-with credit refuses the commit
 ok - fm-attribution-guard: the harness byline refuses the commit
 ok - fm-attribution-guard: a hyphenated credit trailer refuses the commit
@@ -126,8 +127,11 @@ An agent product page on one of those hosts whose path is not in that short list
 The token and credit rules still cover such a line whenever it names an agent, which is what refuses the harness byline `Generated with [Claude Code](https://claude.com/claude-code)` independently of its link.
 Every one of those domains keeps its full strength as a mail domain, so a co-author address at any of them is refused on its own, with no token anywhere on the line, subdomains included.
 That is the premise the shared host list rests on - no human's personal mail lives at one of those hosts - and while the address counted only as a bot signal the line still needed a token, so `Co-authored-by: Composer <noreply@cursor.com>` committed: the vendor whose harness has no suppression control at all, which is precisely the case this layer exists for.
-The host is closed on both sides in both rules, on the `@` and the URL's authority to the left and on a non-alphanumeric, non-dot, non-hyphen character to the right, so a name that merely ends in or opens with one of those strings stays somebody else's: `mailbox.ai` ends in `x.ai`, `x.airtable.com` opens with it, `claude.community` opens with `claude.com`, `openai.com.br` is Brazilian, `https://docs.example.com/mailbox.ai/chat/1` spells one in a path segment, and none of them is refused.
-Excluding the dot from that right-hand class is what keeps `openai.com.br` out while `<noreply@mail.anthropic.com>` closes on the `>`, `<noreply@cursor.com>` on the same, and an address at the end of a line on the line.
+The host is closed on both sides in both rules, on the `@` and the URL's authority to the left, but the two right-hand boundaries are deliberately not the same one and the difference is worth stating plainly.
+The address rule's right-hand class excludes the dot as well as alphanumerics and hyphens, so a name that merely ends in or opens with a vendor host stays somebody else's: `rik@mailbox.ai` ends in `x.ai`, `jane@x.airtable.com` opens with it, `dev@claude.community` opens with `claude.com`, `ana@cursor.com.br` is Brazilian, and none of them is refused, while `<noreply@mail.anthropic.com>` closes on the `>`, `<noreply@cursor.com>` on the same, and an address at the end of a line on the line.
+The URL rule's right-hand class admits the dot, so a host that carries a whole vendor host as its own leading labels IS refused: `https://claude.ai.example.com/faq` and `https://cursor.com.br/chat/1` are refused where the same names in an address are not, while `https://claude.aire.example.com/news` and `https://docs.example.com/mailbox.ai/chat/1` still commit.
+That asymmetry is a deliberate over-refusal on the link side rather than an oversight, and it is recorded here rather than concealed.
+One more thing the address boundary does not answer for: a host that spells a Tier A token is refused by the token rule wherever the address rule lands, because a token is judged on the whole line and not on the host, which is why `ana@openai.com.br` is refused where `ana@cursor.com.br` is not.
 `users.noreply.github.com` is not a vendor host and is untouched by any of it.
 
 A transcript link is refused under a trailer key ending in `-Session` or `-Transcript`, with or without a `-Url` suffix, because the same link rides on all of them and while only `-session:` was read, `Assistant-Transcript: https://transcripts.example.internal/s/...` committed whenever the transcript host was self-hosted or vendor-neutral.
