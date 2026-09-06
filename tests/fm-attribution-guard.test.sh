@@ -47,6 +47,8 @@ MUST_REFUSE=(
   "> Co-authored-by: Claude Code <noreply@anthropic.com>"
   "* Co-authored-by: Codex <noreply@openai.com>"
   "1. Co-authored-by: Claude Opus 5 <noreply@anthropic.com>"
+  "# Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+  "#Generated with Claude Code"
   "Co-authored-by: Claude <claude@claude.ai>"
   "Co-authored-by: Claude <claude@anthropic.com>"
   "Co-authored-by: Gemini <gemini@gemini.google.com>"
@@ -82,6 +84,8 @@ MUST_COMMIT=(
   "history: strip the Co-authored-by trailers Claude Code left behind"
   "Reviewed-by: Jane Doe <jane@example.com>"
   "user-session: expires too early after the cookie change"
+  "# Please enter the commit message for your changes."
+  "# Conflicts:"
   "the tokenizer was rewritten by hand to drop the llama dependency"
   "the table was overwritten by the migration"
   "that page was handwritten by Jane"
@@ -136,6 +140,33 @@ test_decorated_coauthor_trailer_is_refused() {
     fail "a bulleted human co-author trailer was refused"
   [ "$(head_subject "$repo")" = "feat: add a" ] || fail "the human co-author commit did not land"
   pass "fm-attribution-guard: a decorated agent co-author trailer refuses the commit"
+}
+
+# `git commit -m` and `-F` clean with `whitespace`, which keeps a `#` line, so a
+# trailer behind one reaches history unless the commit gate reads it.
+test_commented_agent_trailer_is_refused_at_commit() {
+  local repo out msg
+  repo=$(new_repo commented-trailer)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  out=$(git -C "$repo" commit -m "feat: add a
+
+# Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>" 2>&1) &&
+    fail "a commented agent trailer was accepted by git commit -m"
+  assert_contains "$out" "co-author line naming an agent" "refusal did not name the co-author rule"
+  msg="$TMP_ROOT/commented-trailer.msg"
+  printf 'feat: add a\n\n# Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>\n' > "$msg"
+  out=$(git -C "$repo" commit -F "$msg" 2>&1) &&
+    fail "a commented agent trailer was accepted by git commit -F"
+  assert_contains "$out" "co-author line naming an agent" "refusal did not name the co-author rule"
+  [ "$(head_subject "$repo")" = "seed" ] || fail "a refused commit still landed"
+  git -C "$repo" commit -qm "feat: add a
+
+# Please enter the commit message for your changes. Lines starting
+# with '#' will be ignored, and an empty message aborts the commit." ||
+    fail "a message carrying git's own template comments was refused"
+  [ "$(head_subject "$repo")" = "feat: add a" ] || fail "the ordinary commented commit did not land"
+  pass "fm-attribution-guard: a commented agent trailer refuses the commit"
 }
 
 test_agent_coauthor_commit_is_refused() {
@@ -568,9 +599,9 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>" ||
   pass "fm-attribution-guard: a --no-verify commit is still refused at push"
 }
 
-# A recorded message is final text, so a `#` line in it is real content. Git's
-# default cleanup would have removed this trailer before the commit existed;
-# --cleanup=verbatim keeps it, so the push pass is what has to see it.
+# The commit gate refuses this shape outright now, so the commit has to be forced
+# past it to reach the case this covers: a recorded message is final text, and
+# the push pass has to see the trailer the comment marker hides.
 test_verbatim_commented_trailer_is_caught_at_push() {
   local repo remote out msg
   repo=$(new_repo verbatim-comment)
@@ -582,7 +613,7 @@ test_verbatim_commented_trailer_is_caught_at_push() {
   git -C "$repo" add a.txt
   msg="$TMP_ROOT/verbatim-comment.msg"
   printf 'feat: add a\n\n# Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>\n' > "$msg"
-  git -C "$repo" commit -q --cleanup=verbatim -F "$msg" ||
+  git -C "$repo" commit -q --no-verify --cleanup=verbatim -F "$msg" ||
     fail "the commented trailer did not commit, so the push case cannot be exercised"
   git -C "$repo" log -1 --format=%B | grep -q 'noreply@anthropic.com' ||
     fail "the commented trailer did not survive into the recorded message"
@@ -869,6 +900,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>" ||
 
 test_every_ruled_message_shape_keeps_its_verdict
 test_decorated_coauthor_trailer_is_refused
+test_commented_agent_trailer_is_refused_at_commit
 test_agent_coauthor_commit_is_refused
 test_codex_coauthor_commit_is_refused
 test_human_coauthor_commit_is_accepted

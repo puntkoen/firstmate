@@ -47,10 +47,14 @@
 #     an IDE, CI) defeats the arming.
 #   - Pull request titles and bodies never reach a git hook. Harness-side
 #     suppression and the crewmate brief cover those.
-#   - The commit-msg pass reads the message the way git's default cleanup leaves
-#     it, so `#` lines are ignored there. The pre-push pass reads the recorded
-#     message, where a `#` is final text, so a trailer hidden behind one under
-#     --cleanup=verbatim is refused there.
+#   - Both passes peel a leading `#` and judge what it hides. git cleans a
+#     message it asked an author to EDIT with `strip`, which drops commentary,
+#     but `git commit -m` and `git commit -F` clean with `whitespace`, which
+#     keeps it, so a `#` line in those messages is text that reaches history.
+#     The cost of reading both the same way is disclosed rather than hidden: an
+#     attribution line typed into an editor comment git would have dropped is
+#     refused too. That costs one re-edit, where the other way round costs the
+#     captain's ban.
 #   - The pre-push pass checks at most 1000 outgoing commits per ref, newest
 #     first, and says on stderr when a push exceeds that.
 #   - push-to-checkout, proc-receive, and fsmonitor-watchman have no
@@ -231,19 +235,16 @@ refuse() {  # <headline>
 # Reads the message on file descriptor 0 and never runs in a pipeline, so the
 # reasons it collects survive into the caller.
 #
-# Mode `strip-comments` is for the commit-msg buffer, where git's default cleanup
-# is still to come and a `#` line is an editor comment. Mode `verbatim` is for a
-# recorded message, which is final text: a `#` there is a character the author
-# chose to keep, so the comment marker is peeled off and what it hides is scanned
-# like any other line. That is what closes --cleanup=verbatim at push time.
-scan_message() {  # [strip-comments|verbatim]
-  local mode=${1:-strip-comments} line text found=0
+# A `#` marker is peeled off and what it hides is judged like any other line, in
+# both passes. Skipping such a line would have been right only for a message git
+# is about to clean with `strip`, which is what it does for a message an author
+# edits; `git commit -m` and `git commit -F` clean with `whitespace` and keep the
+# comment, so the trailer reaches history. See the header for what that costs.
+scan_message() {
+  local line text found=0
   while IFS= read -r line || [ -n "$line" ]; do
     text=$line
     if [[ $text =~ ^[[:space:]]*#+[[:space:]]* ]]; then
-      if [ "$mode" = strip-comments ]; then
-        continue
-      fi
       text=${text#"${BASH_REMATCH[0]}"}
     fi
     if [[ $text =~ $COAUTHOR_RE ]] &&
@@ -269,7 +270,7 @@ scan_message() {  # [strip-comments|verbatim]
 check_message() {  # <file>
   [ -f "${1:-}" ] || { echo "error: no such commit message file: ${1:-}" >&2; exit 2; }
   REASONS=()
-  scan_message strip-comments < "$1" || refuse "commit message carries agent attribution"
+  scan_message < "$1" || refuse "commit message carries agent attribution"
 }
 
 # --- path check -------------------------------------------------------------
@@ -308,7 +309,7 @@ check_commits() {  # <rev>...
     message=$(git log -1 --format=%B "$rev")
     BASE_REF=$(git rev-parse --verify --quiet "$rev^1") || BASE_REF=
     REASONS=()
-    scan_message verbatim <<< "$message" || {
+    scan_message <<< "$message" || {
       REASONS=("commit $short:" ${REASONS[@]+"${REASONS[@]}"})
       refuse "an outgoing commit carries agent attribution"
     }

@@ -58,6 +58,7 @@ This is precisely the case the refusal layer exists for.
 $ bash tests/fm-attribution-guard.test.sh
 ok - fm-attribution-guard: every ruled message shape keeps its verdict
 ok - fm-attribution-guard: a decorated agent co-author trailer refuses the commit
+ok - fm-attribution-guard: a commented agent trailer refuses the commit
 ok - fm-attribution-guard: agent co-author trailer refuses the commit
 ok - fm-attribution-guard: a second harness's co-author trailer refuses the commit
 ok - fm-attribution-guard: a human co-author still commits
@@ -96,6 +97,10 @@ ok - fm-attribution-guard: export-env refuses a hooks directory git would find e
 ok - fm-attribution-guard: a clean branch still pushes
 ok - fm-attribution-guard: enforcement comes from the arming, not from the repository
 ```
+
+Both message passes peel a leading `#` and judge what it hides, because `git commit -m` and `git commit -F` clean the message with `whitespace`, which keeps commentary, and only a message the author edits is cleaned with `strip`.
+A `#`-prefixed agent trailer therefore reaches history under `-m`, which is why the commit gate reads it rather than skipping it.
+The disclosed cost of reading both passes the same way is the opposite case: an attribution line typed into an editor comment that git would have dropped is refused too, which costs one re-edit.
 
 A URL rule that reads only the host cannot tell a vendor's agent transcript from that vendor's careers page, so the hosts are split and the split is a disclosed limit rather than a claim of completeness.
 Any URL on a transcript host such as `claude.ai` or `chatgpt.com` is refused, while a host that is also the vendor's company site - `anthropic.com`, `claude.com`, `cursor.com`, `openai.com`, `x.ai`, `xai.com`, `moonshot.cn`, `moonshot.ai`, `deepmind.com` - is refused only when the path names the agent product or a shared conversation.
