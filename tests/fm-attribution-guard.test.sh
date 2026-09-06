@@ -47,6 +47,13 @@ MUST_REFUSE=(
   "> Co-authored-by: Claude Code <noreply@anthropic.com>"
   "* Co-authored-by: Codex <noreply@openai.com>"
   "1. Co-authored-by: Claude Opus 5 <noreply@anthropic.com>"
+  "1) Co-authored-by: Claude Opus 5 <noreply@anthropic.com>"
+  ">> Co-authored-by: Claude Code <noreply@anthropic.com>"
+  "> > Co-authored-by: Claude Code <noreply@anthropic.com>"
+  "| Co-authored-by: Claude Code <noreply@anthropic.com>"
+  "-- Co-authored-by: Claude Code <noreply@anthropic.com>"
+  "\"Co-authored-by: Claude Code <noreply@anthropic.com>\""
+  "	Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
   "# Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
   "#Generated with Claude Code"
   "Co-authored-by: Claude <claude@claude.ai>"
@@ -142,6 +149,61 @@ test_decorated_coauthor_trailer_is_refused() {
     fail "a bulleted human co-author trailer was refused"
   [ "$(head_subject "$repo")" = "feat: add a" ] || fail "the human co-author commit did not land"
   pass "fm-attribution-guard: a decorated agent co-author trailer refuses the commit"
+}
+
+# git lets a repository choose its comment marker, under either config name and
+# with more than one character since 2.45. Both message rules have to read the
+# same one: the marker hides a trailer from the comment rule, and the scissors
+# marker git writes with it is what keeps a verbose diff out of the scan.
+test_configured_comment_marker_is_honoured() {
+  local repo out spec key marker n=0
+  for spec in "core.commentChar ;" "core.commentString ;" "core.commentChar //" "core.commentString //"; do
+    n=$((n + 1))
+    key=${spec%% *}
+    marker=${spec##* }
+    repo=$(new_repo "comment-marker-$n")
+    git -C "$repo" config "$key" "$marker"
+    printf 'work\n' > "$repo/a.txt"
+    git -C "$repo" add a.txt
+    out=$(git -C "$repo" commit -m "feat: add a
+
+$marker Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>" 2>&1) &&
+      fail "an agent trailer behind the configured marker was accepted ($spec)"
+    assert_contains "$out" "co-author line naming an agent" \
+      "refusal did not name the co-author rule ($spec)"
+    git -C "$repo" commit -qm "feat: add a
+
+$marker Please enter the commit message for your changes." ||
+      fail "an ordinary commented message was refused ($spec)"
+    [ "$(head_subject "$repo")" = "feat: add a" ] || fail "the ordinary commit did not land ($spec)"
+  done
+  pass "fm-attribution-guard: the configured comment marker is read by both rules"
+}
+
+# The same marker builds git's scissors line, so a verbose diff must stay out of
+# the scan when the repository does not use the default marker either.
+test_verbose_commit_under_a_configured_marker_still_commits() {
+  local repo editor
+  repo=$(new_repo verbose-marker)
+  printf 'first\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>\nlast\n' > "$repo/notes.md"
+  unarmed_git -C "$repo" add notes.md
+  unarmed_git -C "$repo" commit -qm "chore: add the agent trailer fixture" || fail "fixture commit failed"
+  git -C "$repo" config core.commentString '//'
+  printf 'first\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>\nchanged\n' > "$repo/notes.md"
+  git -C "$repo" add notes.md
+  editor="$TMP_ROOT/verbose-marker-editor.sh"
+  cat > "$editor" <<'SH'
+#!/usr/bin/env bash
+printf 'chore: touch the neighbouring line\n%s\n' "$(cat "$1")" > "$1"
+SH
+  chmod +x "$editor"
+  GIT_EDITOR="$editor" git -C "$repo" commit -qv ||
+    fail "a verbose commit was refused over its own diff under a configured marker"
+  [ "$(head_subject "$repo")" = "chore: touch the neighbouring line" ] ||
+    fail "the verbose commit did not land"
+  git -C "$repo" log -1 --format=%B | grep -q 'noreply@anthropic.com' &&
+    fail "git recorded the discarded diff into the message"
+  pass "fm-attribution-guard: a verbose commit under a configured marker still commits"
 }
 
 # `git commit -v` puts the staged diff in the buffer and git discards it below
@@ -955,6 +1017,8 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>" ||
 test_every_ruled_message_shape_keeps_its_verdict
 test_decorated_coauthor_trailer_is_refused
 test_commented_agent_trailer_is_refused_at_commit
+test_configured_comment_marker_is_honoured
+test_verbose_commit_under_a_configured_marker_still_commits
 test_verbose_commit_removing_a_trailer_still_commits
 test_scissors_line_typed_by_hand_is_caught_at_push
 test_agent_coauthor_commit_is_refused

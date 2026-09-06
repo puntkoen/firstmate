@@ -55,6 +55,10 @@
 #     attribution line typed into an editor comment git would have dropped is
 #     refused too. That costs one re-edit, where the other way round costs the
 #     captain's ban.
+#   - Both message rules read the comment marker this repository configures,
+#     under either config name and however many characters it is, except that
+#     `auto` resolves to `#` rather than to the character git would pick for the
+#     message at hand.
 #   - The commit-msg pass stops reading at git's scissors marker, because
 #     everything below it is the verbose diff git discards. A scissors line
 #     typed into a message by hand therefore hides what follows it from that
@@ -132,11 +136,33 @@ BOT_SIGNAL_RE='noreply|no-reply|@('"$AGENT_HOST_RE"')|bot@|\[bot\]'
 # may carry is therefore owned once, and every trailer rule reads the key through
 # it. Nothing alphanumeric may precede the key, so `history: strip the
 # Co-authored-by trailers` is still ordinary prose rather than a trailer.
-# A bullet has to be followed by whitespace to count as one, because a diff line
-# begins with a bare `-` or `+` and the removal of a trailer is the opposite of
-# adding one.
-LINE_DECORATION_RE='^[[:space:]]*([-*>+][[:space:]]+|[0-9]+[.)][[:space:]]+)*'
+# Punctuation of any kind decorates a trailer - `> `, `>> `, `| `, `-- `, a
+# surrounding quote - with one exception: a single `-` or `+` followed straight
+# by the key is a diff line rather than a decorated trailer, and the removal of a
+# trailer is the opposite of adding one.
+LINE_DECORATION_RE='^([^-+[:alnum:]][^[:alnum:]]*|[-+][^[:alnum:]]+|[[:space:]]*[0-9]+[.)][^[:alnum:]]*)?'
 COAUTHOR_RE="$LINE_DECORATION_RE"'co-?authored?-by:'
+# The marker git comments a message with, resolved once so the rule that reads a
+# commented line and the rule that finds the scissors marker can never disagree
+# about it. `core.commentString` is the current spelling and answers for both
+# names, `core.commentChar` is the older one, and either may be more than one
+# character since git 2.45. Compared as a literal string rather than as a
+# pattern, so a marker made of regex metacharacters needs no escaping.
+# `auto` resolves to git's default here, which is the one shape this does not
+# follow: git picks a character the message does not use, and reproducing that
+# choice would mean re-implementing it.
+comment_marker() {
+  local value
+  value=$(git config --get core.commentString 2>/dev/null) || value=
+  if [ -z "$value" ]; then
+    value=$(git config --get core.commentChar 2>/dev/null) || value=
+  fi
+  case "$value" in
+    ''|auto) value='#' ;;
+  esac
+  printf '%s' "$value"
+}
+COMMENT_MARKER=$(comment_marker)
 # A session link is a trailer whose key ends in -Session whose value is a link
 # or whose line names an agent, or an agent URL as AGENT_URL_RE defines one.
 # Every line is put to every rule below, because one line can carry two
@@ -243,17 +269,22 @@ refuse() {  # <headline>
 # Reads the message on file descriptor 0 and never runs in a pipeline, so the
 # reasons it collects survive into the caller.
 #
-# A `#` marker is peeled off and what it hides is judged like any other line, in
-# both passes. Skipping such a line would have been right only for a message git
-# is about to clean with `strip`, which is what it does for a message an author
-# edits; `git commit -m` and `git commit -F` clean with `whitespace` and keep the
-# comment, so the trailer reaches history. See the header for what that costs.
+# A comment marker is peeled off and what it hides is judged like any other line,
+# in both passes. Skipping such a line would have been right only for a message
+# git is about to clean with `strip`, which is what it does for a message an
+# author edits; `git commit -m` and `git commit -F` clean with `whitespace` and
+# keep the comment, so the trailer reaches history. See the header for what that
+# costs.
 scan_message() {
-  local line text found=0
+  local line text rest found=0
   while IFS= read -r line || [ -n "$line" ]; do
     text=$line
-    if [[ $text =~ ^[[:space:]]*#+[[:space:]]* ]]; then
-      text=${text#"${BASH_REMATCH[0]}"}
+    rest=${text#"${text%%[![:space:]]*}"}
+    if [ -n "$COMMENT_MARKER" ] && [ "${rest#"$COMMENT_MARKER"}" != "$rest" ]; then
+      while [ "${rest#"$COMMENT_MARKER"}" != "$rest" ]; do
+        rest=${rest#"$COMMENT_MARKER"}
+      done
+      text=${rest#"${rest%%[![:space:]]*}"}
     fi
     if [[ $text =~ $COAUTHOR_RE ]] &&
        { [[ $text =~ $TIER_A_RE ]] ||
@@ -275,17 +306,11 @@ scan_message() {
   [ "$found" -eq 0 ]
 }
 
-# git's own scissors marker, built the way git builds it: from the repository's
-# comment character, falling back to git's default when that is unset or `auto`.
-# Only that exact line counts, not one that merely resembles it.
+# git's own scissors marker, built the way git builds it: from the comment marker
+# this repository is configured with. Only that exact line counts, not one that
+# merely resembles it.
 scissors_line() {
-  local char
-  char=$(git config --get core.commentChar 2>/dev/null) || char=
-  case "$char" in
-    ?) ;;
-    *) char='#' ;;
-  esac
-  printf '%s ------------------------ >8 ------------------------\n' "$char"
+  printf '%s ------------------------ >8 ------------------------\n' "$COMMENT_MARKER"
 }
 
 # The commit-msg buffer down to git's scissors marker, which is the part of it

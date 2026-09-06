@@ -59,6 +59,8 @@ $ bash tests/fm-attribution-guard.test.sh
 ok - fm-attribution-guard: every ruled message shape keeps its verdict
 ok - fm-attribution-guard: a decorated agent co-author trailer refuses the commit
 ok - fm-attribution-guard: a commented agent trailer refuses the commit
+ok - fm-attribution-guard: the configured comment marker is read by both rules
+ok - fm-attribution-guard: a verbose commit under a configured marker still commits
 ok - fm-attribution-guard: a verbose commit removing a trailer still commits
 ok - fm-attribution-guard: a trailer below a typed scissors line is refused at push
 ok - fm-attribution-guard: agent co-author trailer refuses the commit
@@ -103,7 +105,9 @@ ok - fm-attribution-guard: enforcement comes from the arming, not from the repos
 The commit-msg pass stops reading at git's scissors marker, because everything below it is the verbose diff `git commit -v` puts in the buffer and git discards.
 Reading it would refuse a commit for the text it removes, which is exactly the captain's own cleanup work on the trailers this control exists to ban.
 The residual is stated rather than hidden: a scissors line typed into a message by hand hides what follows it from the first gate, and the pre-push pass, which reads the recorded message where such a line is ordinary text, is what refuses it before anything leaves the machine.
-A bullet counts as trailer decoration only when whitespace follows it, so `- Co-authored-by:` is still read as the trailer it is while a diff's bare `-Co-Authored-By:` is not.
+Punctuation of any kind decorates a trailer - `- `, `* `, `> `, `>> `, `| `, `-- `, `1. `, a surrounding quote - with one exception: a single `-` or `+` followed straight by the key is a diff line rather than a decorated trailer.
+Both message rules read the comment marker the repository configures, under `core.commentString` or `core.commentChar` and however many characters it is, since git builds both its comment lines and its scissors line from that marker.
+The one shape not followed is `auto`, which resolves to `#` here rather than to the character git would pick for the message at hand.
 
 Both message passes peel a leading `#` and judge what it hides, because `git commit -m` and `git commit -F` clean the message with `whitespace`, which keeps commentary, and only a message the author edits is cleaned with `strip`.
 A `#`-prefixed agent trailer therefore reaches history under `-m`, which is why the commit gate reads it rather than skipping it.
