@@ -81,6 +81,9 @@ MUST_REFUSE=(
   "See https://deepmind.com/conversation/01ABC"
   "See https://xai.com/transcript/01ABC"
   "See https://chatgpt.com/c/01ABC"
+  "Co-authored-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+  "Co-authored-by: Claude <noreply@mail.anthropic.com>"
+  "Co-authored-by: Claude <claude-bot@example.com>"
 )
 MUST_COMMIT=(
   "Co-authored-by: Jane Doe <jane@example.com>"
@@ -108,6 +111,8 @@ MUST_COMMIT=(
   "Pricing at https://moonshot.ai/pricing looks fine."
   "Company page https://xai.com/about and https://x.ai/news"
   "Compare https://openai.com/pricing before deciding."
+  "Co-authored-by: Claude Dupont <1234+cdupont@users.noreply.github.com>"
+  "Co-authored-by: Opus Jansen <9+ojansen@users.noreply.github.com>"
 )
 
 test_every_ruled_message_shape_keeps_its_verdict() {
@@ -337,6 +342,73 @@ Co-authored-by: Claude Dupont <claude.dupont@example.fr>" ||
     fail "commit co-authored by a human named Claude was refused"
   [ "$(head_subject "$repo")" = "feat: add a" ] || fail "the human Claude commit did not land"
   pass "fm-attribution-guard: a human whose name is also a product name still commits"
+}
+
+# GitHub puts <id>+<user>@users.noreply.github.com in every co-author trailer it
+# generates, so reading `noreply` alone as a bot signal locked every Tier B given
+# name out of being credited whenever the trailer came from GitHub.
+test_human_at_a_github_private_address_is_accepted() {
+  local repo
+  repo=$(new_repo human-github-noreply)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  git -C "$repo" commit -qm "feat: add a
+
+Co-authored-by: Claude Dupont <1234+cdupont@users.noreply.github.com>" ||
+    fail "a human co-author at GitHub's own private address was refused"
+  [ "$(head_subject "$repo")" = "feat: add a" ] || fail "the GitHub co-author commit did not land"
+  git -C "$repo" log -1 --format=%B | grep -q "cdupont" || fail "the human co-author trailer was lost"
+  pass "fm-attribution-guard: a human at GitHub's private address still commits"
+}
+
+# The same address must keep refusing GitHub's own bots, which all carry the
+# `[bot]` suffix, and a vendor address stays a bot signal wherever it appears.
+test_bots_at_a_github_private_address_are_refused() {
+  local repo out
+  repo=$(new_repo github-noreply-bot)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  out=$(git -C "$repo" commit -m "feat: add a
+
+Co-authored-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>" 2>&1) &&
+    fail "a GitHub bot co-author was accepted"
+  assert_contains "$out" "co-author line naming an agent" "refusal did not name the co-author rule"
+  out=$(git -C "$repo" commit -m "feat: add a
+
+Co-authored-by: Claude <noreply@mail.anthropic.com>" 2>&1) &&
+    fail "a co-author at a vendor mail subdomain was accepted"
+  assert_contains "$out" "co-author line naming an agent" "refusal did not name the co-author rule"
+  [ "$(head_subject "$repo")" = "seed" ] || fail "a refused commit still landed"
+  pass "fm-attribution-guard: a bot at GitHub's private address is still refused"
+}
+
+# The two halves of the arming have one owner, so a name added to the exported
+# line can never be missing from the list every launch-environment filter reads.
+test_env_names_covers_every_name_export_env_assigns() {
+  local line names name assignment
+  line=$("$ROOT/bin/fm-attribution-guard.sh" export-env) ||
+    fail "export-env failed in this repository"
+  names=$("$ROOT/bin/fm-attribution-guard.sh" env-names) || fail "env-names failed"
+  [ -n "$names" ] || fail "env-names printed nothing"
+  for assignment in $(printf '%s\n' "${line#export }" | tr ' ' '\n'); do
+    case "$assignment" in
+      *=*) name=${assignment%%=*} ;;
+      *) continue ;;
+    esac
+    case "$name" in
+      [A-Z_]*) ;;
+      *) continue ;;
+    esac
+    printf '%s\n' "$names" | grep -qxF "$name" ||
+      fail "export-env assigns $name but env-names does not list it, so a filtered launch environment would drop it"
+  done
+  for name in $names; do
+    case "$line" in
+      *"$name="*) ;;
+      *) fail "env-names lists $name but export-env never assigns it" ;;
+    esac
+  done
+  pass "fm-attribution-guard: env-names names exactly what export-env assigns"
 }
 
 # The tier split exists so real people keep committing, and an unanchored token
@@ -1025,6 +1097,9 @@ test_agent_coauthor_commit_is_refused
 test_codex_coauthor_commit_is_refused
 test_human_coauthor_commit_is_accepted
 test_human_named_claude_is_accepted
+test_human_at_a_github_private_address_is_accepted
+test_bots_at_a_github_private_address_are_refused
+test_env_names_covers_every_name_export_env_assigns
 test_humans_whose_names_contain_agent_tokens_are_accepted
 test_agent_vendor_domain_coauthor_is_refused
 test_session_link_commit_is_refused

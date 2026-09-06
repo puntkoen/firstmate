@@ -232,6 +232,9 @@
 #   CMUX_WORKSPACE_ID CMUX_SURFACE_ID CMUX_TAB_ID CMUX_PANEL_ID CMUX_SOCKET_PATH
 #   ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID FM_ZELLIJ_SESSION, plus the task
 #   marker FM_TASK_ID that ship and scout panes receive above.
+#   The attribution guard's arming is retained too - the names
+#   `bin/fm-attribution-guard.sh env-names` prints - because filtering it away
+#   would start a worker whose commits run no attribution check at all.
 #   An enabled task trace also retains TRACEPARENT. Explicit Firstmate launch
 #   assignments still apply inside the filtered environment. Raw commands must
 #   be POSIX sh compatible under this opt-in; the absent-file path is unchanged.
@@ -3827,6 +3830,17 @@ if ! ATTRIBUTION_GUARD_ENV=$("$FM_ROOT/bin/fm-attribution-guard.sh" export-env);
   echo "error: could not resolve the attribution guard's hook directory; refusing to launch a worker that could sign the captain's history" >&2
   exit 1
 fi
+# The names that line assigns, read from the guard instead of restated here.
+# Every launch path that FILTERS the environment has to retain them, and a
+# filter that does not know a name drops it silently - the worker then starts
+# with no core.hooksPath and an ordinary `git commit` runs no hook at all.
+# Missing names are a spawn-time refusal rather than something to discover later
+# in a project's history.
+if ! ATTRIBUTION_GUARD_ENV_NAMES=$("$FM_ROOT/bin/fm-attribution-guard.sh" env-names) ||
+  [ -z "$ATTRIBUTION_GUARD_ENV_NAMES" ]; then
+  echo "error: the attribution guard did not name the variables its arming needs; refusing to launch a worker whose guard a filtered launch environment could drop" >&2
+  exit 1
+fi
 if ! spawn_send_text_line "$T" "$ATTRIBUTION_GUARD_ENV"; then
   echo "error: could not deliver the attribution guard arming to $W's pane; refusing to launch a worker that could sign the captain's history" >&2
   exit 1
@@ -3850,11 +3864,18 @@ if [ -n "$SPAWN_TRACEPARENT" ]; then
 fi
 if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
   LAUNCH_ENV_PREFIX='/usr/bin/env -i'
+  # $ATTRIBUTION_GUARD_ENV_NAMES is retained unconditionally, the way GOTMPDIR
+  # is. This filter runs AFTER the arming was sent to the pane, so dropping
+  # those names here would leave a worker whose commits pass no attribution
+  # check at all - the exact leak the guard exists to stop, and silent. The list
+  # comes from bin/fm-attribution-guard.sh env-names; do not restate or remove
+  # it here.
   for env_name in HOME PATH USER LOGNAME SHELL TERM COLORTERM LANG LC_ALL LC_CTYPE \
     TMPDIR TMP TEMP GOTMPDIR TMUX TMUX_PANE HERDR_ENV HERDR_SESSION HERDR_SOCKET_PATH \
     HERDR_PANE_ID CMUX_WORKSPACE_ID CMUX_SURFACE_ID CMUX_TAB_ID CMUX_PANEL_ID \
     CMUX_SOCKET_PATH ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID FM_ZELLIJ_SESSION \
     FM_TASK_ID \
+    $ATTRIBUTION_GUARD_ENV_NAMES \
     $LAUNCH_ENV_NAMES; do
     # Only validated names enter shell syntax. Values expand once, quoted, in
     # the pane shell and never become source text or spawn-process snapshots.

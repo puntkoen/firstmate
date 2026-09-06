@@ -67,6 +67,9 @@ ok - fm-attribution-guard: agent co-author trailer refuses the commit
 ok - fm-attribution-guard: a second harness's co-author trailer refuses the commit
 ok - fm-attribution-guard: a human co-author still commits
 ok - fm-attribution-guard: a human whose name is also a product name still commits
+ok - fm-attribution-guard: a human at GitHub's private address still commits
+ok - fm-attribution-guard: a bot at GitHub's private address is still refused
+ok - fm-attribution-guard: env-names names exactly what export-env assigns
 ok - fm-attribution-guard: a human whose name contains an agent token still commits
 ok - fm-attribution-guard: a co-author at an agent vendor host refuses the commit
 ok - fm-attribution-guard: a session link refuses the commit
@@ -117,10 +120,23 @@ A URL rule that reads only the host cannot tell a vendor's agent transcript from
 Any URL on a transcript host such as `claude.ai` or `chatgpt.com` is refused, while a host that is also the vendor's company site - `anthropic.com`, `claude.com`, `cursor.com`, `openai.com`, `x.ai`, `xai.com`, `moonshot.cn`, `moonshot.ai`, `deepmind.com` - is refused only when the path names the agent product or a shared conversation.
 An agent product page on one of those hosts whose path is not in that short list therefore passes the URL rule, which is the deliberate price of keeping ordinary reference links committable: this repository's own `bin/fm-bootstrap.sh` cites `https://cursor.com/cli`, and install, pricing, research and careers pages are not attribution.
 The token and credit rules still cover such a line whenever it names an agent, which is what refuses the harness byline `Generated with [Claude Code](https://claude.com/claude-code)` independently of its link.
-Every one of those domains keeps its full strength as a mail domain, so a co-author address at any of them is refused.
+Every one of those domains keeps its full strength as a mail domain, so a co-author address at any of them is refused, subdomains included: the address rule requires a dot before the vendor host so a domain that merely ends in one of those strings - `mailbox.ai` ends in `x.ai` - stays somebody else's.
+
+`noreply` on its own is not a bot signal, and that is a deliberate narrowing rather than an oversight.
+GitHub gives every account a private `<id>+<user>@users.noreply.github.com` address and puts it in every co-author trailer it generates - web UI, squash merge, co-author suggestion - so reading the word alone as evidence refused a real person whose given name happens to be a Tier B token, which is the one thing the tier split exists to prevent.
+The word still counts at a vendor host, `bot@` and `[bot]` are untouched, and GitHub's own bots all carry the `[bot]` suffix, so `github-actions[bot]` at that same private address keeps refusing.
 
 `tests/fm-spawn-attribution.test.sh` proves a real spawn delivers both layers, and `tests/fm-ensure-agents-md.test.sh` proves an UNTRACKED `CLAUDE.md` pointer is never left committable.
 That includes a pointer an earlier run already wrote, which the script now brings under the ignore rule instead of reporting unchanged.
+
+```
+$ bash tests/fm-spawn-attribution.test.sh
+ok - fm-spawn: the attribution guard is armed in the pane before launch
+ok - fm-spawn: every harness gets the same arming
+ok - fm-spawn: an undeliverable arming refuses the launch
+ok - fm-spawn: the guard survives a filtered launch environment
+ok - fm-spawn: a claude worker's own commit and PR byline is switched off
+```
 
 A `CLAUDE.md` the repository already tracks is out of scope for both layers, in every shape it takes: the pointer file, a symlink left by the older installer, and a real memory file with its own content are left byte-identical and only reported, and no message asks a worker to untrack one.
 That is deliberate and it is the same line the guard draws when it lets an already-tracked path be added, modified, and pushed; `bin/fm-git-tracked-lib.sh` is the one owner both scripts read it from.
@@ -140,6 +156,12 @@ $ GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/tmp/hoo
 ```
 
 Verified on git 2.50.1 (Apple Git-155).
+
+A launch path that FILTERS the environment defeats the arming as completely as unsetting it, without anyone unsetting anything.
+`config/launch-env-allowlist` is such a path: it rewrites the launch as `/usr/bin/env -i <retained names> /bin/sh -c '<launch>'`, and it dropped the three arming names, so a worker launched under that supported feature committed with no hook at all.
+`bin/fm-attribution-guard.sh env-names` is now the one owner of those names, `bin/fm-spawn.sh` reads the list from there and retains it unconditionally, and a spawn that cannot obtain it refuses to launch rather than starting an unguarded worker.
+`tests/fm-spawn-attribution.test.sh` proves it by running the launch environment a real spawn produced and committing through it.
+The remote job paths (`bin/fm-remote-entrypoint.sh`, `bin/fm-remote-job-worker.sh`) also use `env -i`, but they compose the environment of a Firstmate command rather than of a worker's pane, and that command arms its own pane afterwards, so they are not on this boundary.
 
 `bin/fm-ensure-agents-md.sh` does write one line into that shared `.git`, and that is deliberate rather than an oversight.
 The two cases are not the same: a hook file changes how every commit made from the captain's own checkout behaves, while an `info/exclude` entry only stops one vendor-named file from being committed anywhere in that repository.

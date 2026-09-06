@@ -35,6 +35,7 @@
 #   fm-attribution-guard.sh check-commits <rev>...  check message and paths per commit
 #   fm-attribution-guard.sh hooks-dir               print the tracked hooks directory
 #   fm-attribution-guard.sh export-env              print the shell line that arms the hooks
+#   fm-attribution-guard.sh env-names               print the names that line assigns
 #   fm-attribution-guard.sh --help                  print this usage
 #
 # Known limits, stated because a guard whose gaps are secret is worse than one
@@ -44,7 +45,10 @@
 #     --no-verify` defeats both.
 #   - Unsetting GIT_CONFIG_*, passing `git -c core.hooksPath=`, or committing
 #     from a shell that never received the export (the captain's own terminal,
-#     an IDE, CI) defeats the arming.
+#     an IDE, CI) defeats the arming. A launch path that FILTERS the environment
+#     would defeat it the same way without anyone unsetting anything, which is
+#     why `env-names` exists: bin/fm-spawn.sh reads the names from here and
+#     retains them through config/launch-env-allowlist's `/usr/bin/env -i`.
 #   - Pull request titles and bodies never reach a git hook. Harness-side
 #     suppression and the crewmate brief cover those.
 #   - Both passes peel a leading `#` and judge what it hides. git cleans a
@@ -93,6 +97,7 @@ usage: fm-attribution-guard.sh check-message <file>
        fm-attribution-guard.sh check-commits <rev>...
        fm-attribution-guard.sh hooks-dir
        fm-attribution-guard.sh export-env
+       fm-attribution-guard.sh env-names
 Also runs as every git hook through the symlinks in bin/git-hooks/. Read this
 script's header for the full contract.
 EOF
@@ -128,7 +133,20 @@ AGENT_PRODUCT_PATH_RE='/(claude-code|codex|grok|kimi|session|sessions|share|shar
 # rule and the URL rule read the same lists: while they were two hand-kept ones, a
 # co-author line at claude.ai committed even though a URL on that host was refused.
 AGENT_HOST_RE="$AGENT_TRANSCRIPT_HOST_RE"'|'"$AGENT_MIXED_HOST_RE"
-BOT_SIGNAL_RE='noreply|no-reply|@('"$AGENT_HOST_RE"')|bot@|\[bot\]'
+# An address at a vendor, subdomains included, so `noreply@mail.anthropic.com`
+# counts the way `noreply@anthropic.com` does. The dot before the host is
+# required rather than optional text, because a host that merely ENDS in one of
+# these strings is somebody else's: `mailbox.ai` ends in `x.ai`.
+AGENT_ADDRESS_RE='@([^[:space:]>]*\.)?('"$AGENT_HOST_RE"')'
+# `noreply` on its own is not a bot signal. GitHub gives every account a private
+# <id>+<user>@users.noreply.github.com address and puts it in every co-author
+# trailer it generates - web UI, squash merge, co-author suggestion - so reading
+# the word alone as evidence refused a real person whose given name happens to
+# be a Tier B token, which is the one thing the tier split exists to prevent.
+# The word still counts at a vendor host, through AGENT_ADDRESS_RE, and `bot@`
+# and `[bot]` are untouched, so GitHub's own `github-actions[bot]` keeps
+# refusing on the suffix its bots all carry.
+BOT_SIGNAL_RE="$AGENT_ADDRESS_RE"'|bot@|\[bot\]'
 # A trailer is a trailer whatever punctuation a body puts in front of it. A
 # squash body, a release note, or a quoted mail lists trailers as `- `, `* `,
 # `> ` or `1. ` items, and anchoring the key at the very start of the line let an
@@ -225,6 +243,21 @@ agent_path_reason() {  # <path>; prints a reason and returns 0 when the path is 
   return 0
 }
 
+# Owns the "this line names an agent" test, for every rule that needs it. The
+# co-author rule and the credit rule ask exactly the same question, and while
+# each spelled it out for itself the two copies could drift the way the two host
+# lists did.
+names_an_agent() {  # <line>
+  local text=$1
+  if [[ $text =~ $TIER_A_RE ]]; then
+    return 0
+  fi
+  if [[ $text =~ $TIER_B_RE ]] && [[ $text =~ $BOT_SIGNAL_RE ]]; then
+    return 0
+  fi
+  return 1
+}
+
 # Owns which lines count as a credit, for both the message passes.
 is_credit_line() {  # <line>
   local text=$1
@@ -286,9 +319,7 @@ scan_message() {
       done
       text=${rest#"${rest%%[![:space:]]*}"}
     fi
-    if [[ $text =~ $COAUTHOR_RE ]] &&
-       { [[ $text =~ $TIER_A_RE ]] ||
-         { [[ $text =~ $TIER_B_RE ]] && [[ $text =~ $BOT_SIGNAL_RE ]]; }; }; then
+    if [[ $text =~ $COAUTHOR_RE ]] && names_an_agent "$text"; then
       add_reason "co-author line naming an agent: $line"
       found=1
     fi
@@ -296,9 +327,7 @@ scan_message() {
       add_reason "session link: $line"
       found=1
     fi
-    if is_credit_line "$text" &&
-       { [[ $text =~ $TIER_A_RE ]] ||
-         { [[ $text =~ $TIER_B_RE ]] && [[ $text =~ $BOT_SIGNAL_RE ]]; }; }; then
+    if is_credit_line "$text" && names_an_agent "$text"; then
       add_reason "generated-with credit: $line"
       found=1
     fi
@@ -428,6 +457,14 @@ original_hooks_dir() {
 # would leave git running no hook at all and the worker silently unguarded, so
 # export-env resolves through this check rather than printing the line blind.
 CHECKED_HOOKS='commit-msg pre-commit pre-push'
+
+# The environment names export-env assigns, owned here rather than restated by
+# the caller. A launch path that filters the environment - config/launch-env-
+# allowlist rewrites the launch as `/usr/bin/env -i <retained names> ...` - has
+# to retain exactly these, and a name it does not know about is dropped
+# silently, leaving a worker whose commits run no hook at all. Reading the list
+# from the guard means adding a name here cannot leave such a filter behind.
+ARMED_ENV_NAMES=(GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0)
 
 require_hooks_installed() {  # prints the hooks directory, or names what is missing
   local dir name missing=
@@ -605,6 +642,7 @@ case "${1:-}" in
   check-staged) check_staged ;;
   check-commits) shift; [ "$#" -gt 0 ] || { usage >&2; exit 2; }; check_commits "$@" ;;
   hooks-dir) hooks_dir ;;
+  env-names) printf '%s\n' "${ARMED_ENV_NAMES[@]}" ;;
   export-env)
     GUARD_HOOKS_DIR=$(require_hooks_installed) || exit 1
     printf 'export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=%s\n' \

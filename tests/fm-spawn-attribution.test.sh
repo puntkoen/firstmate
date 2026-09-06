@@ -149,6 +149,80 @@ test_spawn_refuses_when_the_arming_cannot_be_delivered() {
   pass "fm-spawn: an undeliverable arming refuses the launch"
 }
 
+# config/launch-env-allowlist rewrites the launch as
+# `/usr/bin/env -i <retained names> /bin/sh -c '<launch>'`, which silently drops
+# every name the retained set does not list. It dropped the guard's arming, so a
+# worker launched under that supported feature committed with no hook at all.
+# This runs the recorded launch environment for real and commits through it.
+test_guard_survives_a_filtered_launch_environment() {
+  local rec id log out exports launch prefix repo script rcfile outfile rc
+  id=attr-allowlist-d1
+  rec=$(make_case arming-allowlist "$id" codex)
+  read_case "$rec"
+  printf '# nothing but the floor\n' > "$HOME_DIR/config/launch-env-allowlist"
+  log="$TMP_ROOT/arming-allowlist/launch.log"
+  : > "$log"
+
+  out=$(FM_FAKE_LAUNCH_LOG="$log" \
+    fm_test_run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN" \
+    "$id" "$PROJ_DIR" --mode no-mistakes --yolo off)
+  expect_code 0 $? "spawn under a launch-env allowlist failed: $out"
+
+  exports=$(grep '^export ' "$log")
+  launch=$(grep -v '^export ' "$log" | tail -1)
+  case "$launch" in
+    "/usr/bin/env -i "*) ;;
+    *) fail "the allowlist did not filter the launch environment: $launch" ;;
+  esac
+  prefix=${launch%%/bin/sh -c *}
+  [ "$prefix" != "$launch" ] || fail "the filtered launch had no /bin/sh -c payload: $launch"
+
+  # A scratch repository, committed to through the launch environment the spawn
+  # actually produced: the exports as the pane shell received them, then the
+  # real env filter, then a commit in place of the harness command.
+  repo="$TMP_ROOT/arming-allowlist/repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email captain@example.com
+  git -C "$repo" config user.name Captain
+  printf 'seed\n' > "$repo/README.md"
+  git -C "$repo" add README.md
+  git -C "$repo" commit -qm seed || fail "seed commit failed"
+
+  script="$TMP_ROOT/arming-allowlist/commit.sh"
+  rcfile="$TMP_ROOT/arming-allowlist/rc"
+  outfile="$TMP_ROOT/arming-allowlist/commit.out"
+  filtered_commit() {  # <message>; runs one commit inside the filtered launch env
+    printf 'work-%s\n' "$RANDOM" > "$repo/a.txt"
+    git -C "$repo" add a.txt
+    cat > "$script" <<SH
+cd $repo || exit 99
+git commit -m '$1' > $outfile 2>&1
+printf '%s\n' "\$?" > $rcfile
+SH
+    bash -c "$exports
+$prefix /bin/sh $script" || true
+    cat "$rcfile"
+  }
+
+  rc=$(filtered_commit 'feat: add a
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>')
+  [ "$rc" != 0 ] ||
+    fail "a worker launched under the allowlist committed agent attribution: $(cat "$outfile")"
+  grep -q "no reference to an AI agent" "$outfile" ||
+    fail "the commit failed for some other reason than the guard: $(cat "$outfile")"
+  [ "$(git -C "$repo" log -1 --format=%s)" = seed ] || fail "the refused commit still landed"
+
+  # The control: the same filtered environment must still commit ordinary work,
+  # so the refusal above is the guard rather than a broken launch environment.
+  rc=$(filtered_commit 'feat: add a')
+  [ "$rc" = 0 ] || fail "the filtered launch environment cannot commit at all: $(cat "$outfile")"
+  [ "$(git -C "$repo" log -1 --format=%s)" = "feat: add a" ] ||
+    fail "the clean commit did not land under the filtered launch environment"
+  pass "fm-spawn: the guard survives a filtered launch environment"
+}
+
 test_claude_spawn_suppresses_its_own_byline() {
   local rec id out settings
   id=attr-claude-b1
@@ -177,4 +251,5 @@ PY
 test_spawn_arms_the_guard_before_launch
 test_arming_is_harness_independent
 test_spawn_refuses_when_the_arming_cannot_be_delivered
+test_guard_survives_a_filtered_launch_environment
 test_claude_spawn_suppresses_its_own_byline

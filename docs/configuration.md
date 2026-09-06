@@ -360,6 +360,7 @@ SSH_AUTH_SOCK
 ```
 
 Firstmate retains basic home, executable search, terminal, locale, temporary-directory, and backend routing variables, plus its explicit launch assignments, its ship and scout task marker, and enabled task trace.
+It also retains the [agent-attribution guard](verification/agent-attribution.md) arming, because a worker launched without it would commit with no attribution check at all.
 [`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns the exact retained names and parsing mechanics.
 Other ambient names must be listed explicitly, including custom credential-store locations, proxy settings, and certificate overrides when required by the selected tools.
 The command shell and worker may still create their own variables.
