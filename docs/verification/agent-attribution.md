@@ -56,6 +56,8 @@ This is precisely the case the refusal layer exists for.
 
 ```
 $ bash tests/fm-attribution-guard.test.sh
+ok - fm-attribution-guard: every ruled message shape keeps its verdict
+ok - fm-attribution-guard: a decorated agent co-author trailer refuses the commit
 ok - fm-attribution-guard: agent co-author trailer refuses the commit
 ok - fm-attribution-guard: a second harness's co-author trailer refuses the commit
 ok - fm-attribution-guard: a human co-author still commits

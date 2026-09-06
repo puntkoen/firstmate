@@ -36,6 +36,108 @@ new_repo() {  # <name>
 
 head_subject() { git -C "$1" log -1 --format=%s 2>/dev/null || printf ''; }
 
+# One battery over every message shape the captain has ruled on across this
+# work, so a fix for one rule can no longer quietly reopen another. Each case
+# runs the real guard against a real message file through its own entry point.
+MUST_REFUSE=(
+  "Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+  "Co-authored-by: Claude Code <noreply@anthropic.com>"
+  "Co-authored-by: Codex <noreply@openai.com>"
+  "- Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+  "> Co-authored-by: Claude Code <noreply@anthropic.com>"
+  "* Co-authored-by: Codex <noreply@openai.com>"
+  "1. Co-authored-by: Claude Opus 5 <noreply@anthropic.com>"
+  "Co-authored-by: Claude <claude@claude.ai>"
+  "Co-authored-by: Claude <claude@anthropic.com>"
+  "Co-authored-by: Gemini <gemini@gemini.google.com>"
+  "Co-authored-by: Jane Doe <jane@example.com> paired via https://claude.ai/code/session_01ABC"
+  "Claude-Session: https://claude.ai/code/session_01DEDS82"
+  "Claude-Session: session_01DEDS82"
+  "Assistant-Session: https://transcripts.example.internal/s/01DEDS82"
+  "- Claude-Session: https://claude.ai/code/session_01DEDS82"
+  "* Claude-Session: session_01DEDS82"
+  "Generated with Claude Code"
+  "Generated with [Claude Code](https://claude.com/claude-code)"
+  "Generated-With: Claude Code"
+  "Assisted-By: Claude <noreply@anthropic.com>"
+  "chore: ship the auto-generated with Claude Code helper"
+  "chore: the module was Co-generated with Claude Code"
+  "See https://claude.com/claude-code"
+  "See https://www.anthropic.com/share/01ABC"
+  "See https://cursor.com/conversation/01ABC"
+  "See https://openai.com/codex/"
+  "See https://x.ai/grok"
+  "See https://kimi.moonshot.cn/chat/01ABC"
+  "See https://moonshot.ai/share/01ABC"
+  "See https://deepmind.com/conversation/01ABC"
+  "See https://xai.com/transcript/01ABC"
+  "See https://chatgpt.com/c/01ABC"
+)
+MUST_COMMIT=(
+  "Co-authored-by: Jane Doe <jane@example.com>"
+  "- Co-authored-by: Jane Doe <jane@example.com>"
+  "Co-authored-by: Claude Dupont <claude.dupont@example.fr>"
+  "Co-authored-by: Jan Raider <jan@raiderstech.com>"
+  "Co-authored-by: Ana Codexis <ana@codexis.com>"
+  "history: strip the Co-authored-by trailers Claude Code left behind"
+  "Reviewed-by: Jane Doe <jane@example.com>"
+  "user-session: expires too early after the cookie change"
+  "the tokenizer was rewritten by hand to drop the llama dependency"
+  "the table was overwritten by the migration"
+  "that page was handwritten by Jane"
+  "refresh the client generated with the openapi script"
+  "response created with mistral-small endpoint"
+  "bootstrap: point cursor-agent installs at https://cursor.com/cli"
+  "Background: https://www.anthropic.com/research/tracing-thoughts"
+  "Pricing: https://cursor.com/pricing"
+  "See https://claude.com/careers"
+  "See https://deepmind.com/research/alphafold"
+  "Pricing at https://moonshot.ai/pricing looks fine."
+  "Company page https://xai.com/about and https://x.ai/news"
+  "Compare https://openai.com/pricing before deciding."
+)
+
+test_every_ruled_message_shape_keeps_its_verdict() {
+  local msg line failures=0
+  msg="$TMP_ROOT/battery.msg"
+  for line in "${MUST_REFUSE[@]}"; do
+    printf 'feat: add a\n\n%s\n' "$line" > "$msg"
+    if "$ROOT/bin/fm-attribution-guard.sh" check-message "$msg" >/dev/null 2>&1; then
+      printf 'battery accepted a line that must refuse: %s\n' "$line" >&2
+      failures=$((failures + 1))
+    fi
+  done
+  for line in "${MUST_COMMIT[@]}"; do
+    printf 'feat: add a\n\n%s\n' "$line" > "$msg"
+    if ! "$ROOT/bin/fm-attribution-guard.sh" check-message "$msg" >/dev/null 2>&1; then
+      printf 'battery refused a line that must commit: %s\n' "$line" >&2
+      failures=$((failures + 1))
+    fi
+  done
+  [ "$failures" -eq 0 ] || fail "$failures ruled message shapes changed verdict"
+  pass "fm-attribution-guard: every ruled message shape keeps its verdict"
+}
+
+# A decorated trailer is the shape the co-author rule used to miss entirely.
+test_decorated_coauthor_trailer_is_refused() {
+  local repo out
+  repo=$(new_repo decorated-coauthor)
+  printf 'work\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  out=$(git -C "$repo" commit -m "feat: add a
+
+- Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>" 2>&1) &&
+    fail "a bulleted agent co-author trailer was accepted"
+  assert_contains "$out" "co-author line naming an agent" "refusal did not name the co-author rule"
+  [ "$(head_subject "$repo")" = "seed" ] || fail "the refused commit still landed"
+  git -C "$repo" commit -qm "feat: add a
+
+- Co-authored-by: Jane Doe <jane@example.com>" ||
+    fail "a bulleted human co-author trailer was refused"
+  [ "$(head_subject "$repo")" = "feat: add a" ] || fail "the human co-author commit did not land"
+  pass "fm-attribution-guard: a decorated agent co-author trailer refuses the commit"
+}
+
 test_agent_coauthor_commit_is_refused() {
   local repo out
   repo=$(new_repo agent-coauthor)
@@ -765,6 +867,8 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>" ||
   pass "fm-attribution-guard: enforcement comes from the arming, not from the repository"
 }
 
+test_every_ruled_message_shape_keeps_its_verdict
+test_decorated_coauthor_trailer_is_refused
 test_agent_coauthor_commit_is_refused
 test_codex_coauthor_commit_is_refused
 test_human_coauthor_commit_is_accepted

@@ -116,7 +116,15 @@ AGENT_PRODUCT_PATH_RE='/(claude-code|codex|grok|kimi|session|sessions|share|shar
 # co-author line at claude.ai committed even though a URL on that host was refused.
 AGENT_HOST_RE="$AGENT_TRANSCRIPT_HOST_RE"'|'"$AGENT_MIXED_HOST_RE"
 BOT_SIGNAL_RE='noreply|no-reply|@('"$AGENT_HOST_RE"')|bot@|\[bot\]'
-COAUTHOR_RE='^[[:space:]]*co-?authored?-by:'
+# A trailer is a trailer whatever punctuation a body puts in front of it. A
+# squash body, a release note, or a quoted mail lists trailers as `- `, `* `,
+# `> ` or `1. ` items, and anchoring the key at the very start of the line let an
+# agent co-author trailer through on exactly that shape. The decoration a line
+# may carry is therefore owned once, and every trailer rule reads the key through
+# it. Nothing alphanumeric may precede the key, so `history: strip the
+# Co-authored-by trailers` is still ordinary prose rather than a trailer.
+LINE_DECORATION_RE='^[^[:alnum:]]*([0-9]+[.)][^[:alnum:]]*)?'
+COAUTHOR_RE="$LINE_DECORATION_RE"'co-?authored?-by:'
 # A session link is a trailer whose key ends in -Session whose value is a link
 # or whose line names an agent, or an agent URL as AGENT_URL_RE defines one.
 # Every line is put to every rule below, because one line can carry two
@@ -128,8 +136,8 @@ COAUTHOR_RE='^[[:space:]]*co-?authored?-by:'
 # the tier split exists to avoid. Nothing real is lost, because
 # `Claude-Session: https://claude.ai/code/session_...` carries both a link and a
 # token and AGENT_URL_RE refuses it a second time.
-SESSION_TRAILER_RE='^[[:space:]]*[a-z][a-z0-9_-]*-session:[[:space:]]*[^[:space:]]'
-SESSION_TRAILER_URL_RE='^[[:space:]]*[a-z][a-z0-9_-]*-session:[[:space:]]*[a-z][a-z0-9+.-]*://'
+SESSION_TRAILER_RE="$LINE_DECORATION_RE"'[a-z][a-z0-9_-]*-session:[[:space:]]*[^[:space:]]'
+SESSION_TRAILER_URL_RE="$LINE_DECORATION_RE"'[a-z][a-z0-9_-]*-session:[[:space:]]*[a-z][a-z0-9+.-]*://'
 AGENT_URL_RE='https?://[^[:space:]]*('"$AGENT_TRANSCRIPT_HOST_RE"')|https?://[^[:space:]]*('"$AGENT_MIXED_HOST_RE"')[^[:space:]]*'"$AGENT_PRODUCT_PATH_RE"
 # The verbs are anchored on non-alphanumeric boundaries so `written by` does not
 # fire inside `rewritten by`, `overwritten by`, or `handwritten by`. A hyphen
@@ -179,7 +187,7 @@ agent_path_reason() {  # <path>; prints a reason and returns 0 when the path is 
   return 0
 }
 
-# Owns which lines count as a session link, for both the message passes.
+# Owns which lines count as a credit, for both the message passes.
 is_credit_line() {  # <line>
   local text=$1
   while [[ $text =~ $COAUTHOR_WORD_RE ]]; do
@@ -188,6 +196,7 @@ is_credit_line() {  # <line>
   [[ $text =~ $CREDIT_RE ]]
 }
 
+# Owns which lines count as a session link, for both the message passes.
 is_session_link() {  # <line>
   local text=$1
   if [[ $text =~ $AGENT_URL_RE ]]; then
