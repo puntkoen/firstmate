@@ -91,11 +91,13 @@ MUST_REFUSE=(
   "Co-authored-by: Someone <noreply@moonshot.ai>"
   "Assistant-Transcript: https://transcripts.example.internal/s/01DEDS82"
   "Claude-Session-Url: https://transcripts.example.internal/s/01DEDS82"
-  "Agent-Conversation: https://transcripts.example.internal/c/01DEDS82"
-  "Worker-Thread: https://transcripts.example.internal/t/01DEDS82"
-  "Assistant-Chat: https://transcripts.example.internal/x/01DEDS82"
   "- Assistant-Transcript: https://transcripts.example.internal/s/01DEDS82"
   "Claude-Transcript: transcript_01DEDS82"
+  "Claude-Conversation: conversation_01DEDS82"
+  "Gemini-Thread: thread_01DEDS82"
+  "Claude-Chat: chat_01DEDS82"
+  "Support-thread: https://claude.ai/code/session_01ABC"
+  "Live-chat: https://chatgpt.com/c/01ABC"
 )
 MUST_COMMIT=(
   "Co-authored-by: Jane Doe <jane@example.com>"
@@ -126,8 +128,14 @@ MUST_COMMIT=(
   "Co-authored-by: Claude Dupont <1234+cdupont@users.noreply.github.com>"
   "Co-authored-by: Opus Jansen <9+ojansen@users.noreply.github.com>"
   "Co-authored-by: Rik Mailbox <rik@mailbox.ai>"
+  "Co-authored-by: Jane Doe <jane@x.airtable.com>"
+  "Co-authored-by: Dev Ops <dev@claude.community>"
   "user-transcript: renders the wrong speaker after the merge"
   "support-thread: the customer reported it twice"
+  "Slack-thread: https://acme.slack.com/archives/C123/p1700000"
+  "Support-thread: https://support.example.com/t/4821"
+  "Live-chat: https://intercom.example.com/c/9912"
+  "Reviewed-thread: https://github.com/acme/repo/pull/12#discussion_r1"
   "Session: https://sessions.example.internal/s/01DEDS82"
   "Transcript: https://transcripts.example.internal/s/01DEDS82"
   "See https://docs.example.com/mailbox.ai/chat/1"
@@ -517,9 +525,18 @@ Co-authored-by: Claude Dupont <1234+cdupont@users.noreply.github.com>" ||
   git -C "$repo" add a.txt
   git -C "$repo" commit -qm "feat: extend a
 
-Co-authored-by: Rik Mailbox <rik@mailbox.ai>" ||
-    fail "a human at a host that merely ends in a vendor host was refused"
-  [ "$(head_subject "$repo")" = "feat: extend a" ] || fail "the mailbox.ai co-author commit did not land"
+Co-authored-by: Rik Mailbox <rik@mailbox.ai>
+Co-authored-by: Jane Doe <jane@x.airtable.com>
+Co-authored-by: Dev Ops <dev@claude.community>" ||
+    fail "a human at a host that merely ends in or opens with a vendor host was refused"
+  [ "$(head_subject "$repo")" = "feat: extend a" ] || fail "the neighbouring-host co-author commit did not land"
+  printf 'again\n' >> "$repo/a.txt"
+  git -C "$repo" add a.txt
+  out=$(git -C "$repo" commit -m "feat: extend a again
+
+Co-authored-by: Someone <noreply@mail.cursor.com>" 2>&1) &&
+    fail "a co-author at a vendor mail subdomain was accepted"
+  assert_contains "$out" "co-author line naming an agent" "refusal did not name the co-author rule"
   pass "fm-attribution-guard: an agent vendor address alone refuses the co-author line"
 }
 
@@ -594,13 +611,23 @@ test_every_transcript_trailer_key_is_refused() {
   for line in \
     "Assistant-Transcript: https://transcripts.example.internal/s/01DEDS82" \
     "Claude-Session-Url: https://transcripts.example.internal/s/01DEDS82" \
-    "Agent-Conversation: https://transcripts.example.internal/c/01DEDS82" \
-    "Worker-Thread: https://transcripts.example.internal/t/01DEDS82" \
-    "Assistant-Chat: https://transcripts.example.internal/x/01DEDS82" \
+    "Assistant-Session: https://transcripts.example.internal/s/01DEDS82" \
+    "Claude-Session: https://claude.ai/code/session_01ABC" \
     "Claude-Transcript: transcript_01DEDS82"; do
     out=$(git -C "$repo" commit -m "feat: add a
 
 $line" 2>&1) && fail "a transcript trailer was accepted: $line"
+    assert_contains "$out" "session link" "refusal did not name the session-link rule for $line"
+  done
+  for line in \
+    "Claude-Conversation: conversation_01DEDS82" \
+    "Gemini-Thread: thread_01DEDS82" \
+    "Claude-Chat: chat_01DEDS82" \
+    "Support-thread: https://claude.ai/code/session_01ABC" \
+    "Live-chat: https://chatgpt.com/c/01ABC"; do
+    out=$(git -C "$repo" commit -m "feat: add a
+
+$line" 2>&1) && fail "a conversation trailer naming an agent was accepted: $line"
     assert_contains "$out" "session link" "refusal did not name the session-link rule for $line"
   done
   [ "$(head_subject "$repo")" = "seed" ] || fail "a refused commit still landed"
@@ -621,13 +648,19 @@ test_human_transcript_wording_and_bare_keys_are_accepted() {
 user-transcript: renders the wrong speaker after the merge
 support-thread: the customer reported it twice
 Session: https://sessions.example.internal/s/01DEDS82
-Transcript: https://transcripts.example.internal/s/01DEDS82" ||
-    fail "a human's own session and transcript references were refused"
+Transcript: https://transcripts.example.internal/s/01DEDS82
+Slack-thread: https://acme.slack.com/archives/C123/p1700000
+Support-thread: https://support.example.com/t/4821
+Live-chat: https://intercom.example.com/c/9912
+Reviewed-thread: https://github.com/acme/repo/pull/12#discussion_r1" ||
+    fail "a human's own session, thread and chat references were refused"
   [ "$(head_subject "$repo")" = "fix: shorten the cookie lifetime" ] ||
     fail "the human transcript-wording commit did not land"
   git -C "$repo" log -1 --format=%B | grep -q "sessions.example.internal" ||
     fail "the human's own session link was lost"
-  pass "fm-attribution-guard: a human's own session and transcript lines still commit"
+  git -C "$repo" log -1 --format=%B | grep -q "acme.slack.com" ||
+    fail "the human's own thread link was lost"
+  pass "fm-attribution-guard: a human's own session, thread and chat lines still commit"
 }
 
 # A line can carry two signatures at once. The co-author rule does not refuse a

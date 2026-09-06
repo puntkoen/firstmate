@@ -68,12 +68,13 @@
 #     typed into a message by hand therefore hides what follows it from that
 #     first gate; the pre-push pass reads the recorded message, where such a
 #     line is ordinary text, and refuses it before anything leaves the machine.
-#   - A transcript trailer is recognised by a key ending in -Session,
-#     -Transcript, -Conversation, -Thread or -Chat, with or without a -Url
-#     suffix. A key with no such ending - a bare `Session:` or `Transcript:` -
-#     is left alone on purpose, so a human linking an internal debugging
-#     session still commits; such a line is refused only when it names an agent
-#     or its link is on an agent host.
+#   - A link value alone is attribution only under a key ending in -Session or
+#     -Transcript, with or without a -Url suffix. A bare `Session:` or
+#     `Transcript:` key, and a `-Conversation`, `-Thread` or `-Chat` key, are
+#     left alone on purpose, so a human linking an internal debugging session,
+#     a Slack thread, a support ticket or a pull request discussion still
+#     commits; such a line is refused only when it names an agent or its link
+#     is on an agent host.
 #   - The pre-push pass checks at most 1000 outgoing commits per ref, newest
 #     first, and says on stderr when a push exceeds that.
 #   - push-to-checkout, proc-receive, and fsmonitor-watchman have no
@@ -142,9 +143,13 @@ AGENT_PRODUCT_PATH_RE='/(claude-code|codex|grok|kimi|session|sessions|share|shar
 # co-author line at claude.ai committed even though a URL on that host was refused.
 AGENT_HOST_RE="$AGENT_TRANSCRIPT_HOST_RE"'|'"$AGENT_MIXED_HOST_RE"
 # An address at a vendor, subdomains included, so `noreply@mail.anthropic.com`
-# counts the way `noreply@anthropic.com` does. The dot before the host is
-# required rather than optional text, because a host that merely ENDS in one of
-# these strings is somebody else's: `mailbox.ai` ends in `x.ai`.
+# counts the way `noreply@anthropic.com` does. The host is closed on both sides,
+# because a host that merely ends in one of these strings is somebody else's -
+# `mailbox.ai` ends in `x.ai` - and so is one that merely opens with it:
+# `x.airtable.com` opens with `x.ai` and `claude.community` with `claude.com`.
+# The trailing class excludes the dot as well as alphanumerics and hyphens, which
+# is what keeps `openai.com.br` a Brazilian domain, while `<...@cursor.com>`
+# closes on the `>` and an address at the end of a line closes on the line.
 #
 # This is attribution on its own, with no token anywhere on the line, because of
 # the premise stated just above: no human's personal mail lives at one of these
@@ -153,7 +158,7 @@ AGENT_HOST_RE="$AGENT_TRANSCRIPT_HOST_RE"'|'"$AGENT_MIXED_HOST_RE"
 # <noreply@cursor.com>` committed - the vendor whose harness has no suppression
 # control at all, which is the exact case this layer exists to answer for.
 # `users.noreply.github.com` is not a vendor host and is untouched by this.
-AGENT_ADDRESS_RE='@([^[:space:]>]*\.)?('"$AGENT_HOST_RE"')'
+AGENT_ADDRESS_RE='@([^[:space:]>]*\.)?('"$AGENT_HOST_RE"')([^[:alnum:].-]|$)'
 # `noreply` on its own is not a bot signal. GitHub gives every account a private
 # <id>+<user>@users.noreply.github.com address and puts it in every co-author
 # trailer it generates - web UI, squash merge, co-author suggestion - so reading
@@ -210,16 +215,24 @@ COMMENT_MARKER=$(comment_marker)
 # token and AGENT_URL_RE refuses it a second time.
 #
 # A transcript trailer is the KEY set, not one spelling of it: the same link
-# rides on `-Session`, `-Transcript`, `-Conversation`, `-Thread`, `-Chat` and the
-# `-Url` suffix any of them may carry, and while only `-session:` was read,
+# rides on `-Session` and `-Transcript` and on the `-Url` suffix either may
+# carry, and while only `-session:` was read,
 # `Assistant-Transcript: https://transcripts.example.internal/s/...` committed
 # whenever the transcript host was self-hosted or vendor-neutral. The value rule
 # is unchanged and is what keeps the narrowing safe: a bare `Session:` or
 # `Transcript:` key is not a transcript trailer at all, so a human linking an
 # internal debugging session still commits.
-SESSION_TRAILER_KEY_RE="$LINE_DECORATION_RE"'[a-z][a-z0-9_-]*-(session|transcript|conversation|thread|chat)(-url)?:'
+#
+# `-Conversation`, `-Thread` and `-Chat` are the second set, and a link under one
+# of them is NOT attribution on its own. Those three are ordinary human trailer
+# practice - the Slack thread, the support ticket, or the pull request discussion
+# a fix came from - so reading a link there as a transcript refused a legitimate
+# human commit over its wording. They need what a bare key needs: an agent named
+# on the line, or a link the URL rule already refuses for its host.
+SESSION_TRAILER_KEY_RE="$LINE_DECORATION_RE"'[a-z][a-z0-9_-]*-(session|transcript)(-url)?:'
 SESSION_TRAILER_RE="$SESSION_TRAILER_KEY_RE"'[[:space:]]*[^[:space:]]'
 SESSION_TRAILER_URL_RE="$SESSION_TRAILER_KEY_RE"'[[:space:]]*[a-z][a-z0-9+.-]*://'
+CONVERSATION_TRAILER_RE="$LINE_DECORATION_RE"'[a-z][a-z0-9_-]*-(conversation|thread|chat)(-url)?:[[:space:]]*[^[:space:]]'
 # The authority a URL's host sits in: the scheme, any userinfo, and any
 # subdomains, each of which must end in a dot. The host is anchored there for the
 # reason the address rule anchors on `@`: a name that merely ENDS in one of these
@@ -315,6 +328,11 @@ is_session_link() {  # <line>
     if [[ $text =~ $SESSION_TRAILER_URL_RE ]] ||
        [[ $text =~ $TIER_A_RE ]] ||
        [[ $text =~ $TIER_B_RE ]]; then
+      return 0
+    fi
+  fi
+  if [[ $text =~ $CONVERSATION_TRAILER_RE ]]; then
+    if [[ $text =~ $TIER_A_RE ]] || [[ $text =~ $TIER_B_RE ]]; then
       return 0
     fi
   fi
