@@ -16,6 +16,11 @@ HOOKS_DIR=$("$ROOT/bin/fm-attribution-guard.sh" hooks-dir)
 # only, nothing written into the repository's own .git.
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$HOOKS_DIR"
 
+# The arming line a spawn sends to the worker's pane shell, resolved once so the
+# cases below run the real thing rather than a restatement of it.
+ARMING_LINE=$("$ROOT/bin/fm-attribution-guard.sh" export-env) ||
+  fail "export-env failed in this repository"
+
 # git without firstmate's arming, for fixture setup and for the case that
 # asserts where the enforcement actually comes from.
 unarmed_git() {
@@ -413,33 +418,134 @@ Co-authored-by: Claude <noreply@mail.anthropic.com>" 2>&1) &&
   pass "fm-attribution-guard: a bot at GitHub's private address is still refused"
 }
 
-# The two halves of the arming have one owner, so a name added to the exported
-# line can never be missing from the list every launch-environment filter reads.
-test_env_names_covers_every_name_export_env_assigns() {
-  local line names name assignment
-  line=$("$ROOT/bin/fm-attribution-guard.sh" export-env) ||
-    fail "export-env failed in this repository"
+# Runs the arming the way the pane shell runs it - from an empty environment
+# plus whatever scope is handed in - and prints the GIT_CONFIG_* environment it
+# leaves behind, one NAME=value per line.
+armed_env() {  # <inherited NAME=value>...
+  env -i "$@" PATH="$PATH" /bin/sh -c \
+    "$ARMING_LINE"' && env | grep "^GIT_CONFIG_" | sort'
+}
+
+# Reads one config value out of a repository through an environment the arming
+# produced, so the assertion is git's own answer rather than a variable's text.
+armed_git_config() {  # <repo> <key> <inherited NAME=value>...
+  local repo=$1 key=$2
+  shift 2
+  env -i "$@" PATH="$PATH" /bin/sh -c \
+    "$ARMING_LINE"'; cd "$0" && git config --get "$1"' "$repo" "$key"
+}
+
+# The two halves of the arming have one owner, so a name the arming assigns can
+# never be missing from the list every launch-environment filter reads. The
+# names are read from the environment the arming really produces, because the
+# index it writes at is decided by the receiving shell rather than by the text.
+test_env_names_covers_every_name_the_arming_assigns() {
+  local names produced name inherited=() i=0
   names=$("$ROOT/bin/fm-attribution-guard.sh" env-names) || fail "env-names failed"
   [ -n "$names" ] || fail "env-names printed nothing"
-  for assignment in $(printf '%s\n' "${line#export }" | tr ' ' '\n'); do
-    case "$assignment" in
-      *=*) name=${assignment%%=*} ;;
-      *) continue ;;
-    esac
-    case "$name" in
-      [A-Z_]*) ;;
-      *) continue ;;
-    esac
-    printf '%s\n' "$names" | grep -qxF "$name" ||
-      fail "export-env assigns $name but env-names does not list it, so a filtered launch environment would drop it"
+  # A scope filling the window to its last free slot, so the arming's own entry
+  # lands on the highest index it will ever use.
+  while [ "$i" -lt 15 ]; do
+    inherited+=("GIT_CONFIG_KEY_$i=captain.probe" "GIT_CONFIG_VALUE_$i=inherited")
+    i=$((i + 1))
   done
+  inherited+=(GIT_CONFIG_COUNT=15)
+  for produced in $(armed_env | cut -d= -f1) $(armed_env "${inherited[@]}" | cut -d= -f1); do
+    printf '%s\n' "$names" | grep -qxF "$produced" ||
+      fail "the arming assigns $produced but env-names does not list it, so a filtered launch environment would drop it"
+  done
+  # And nothing stale in the other direction: at that boundary the arming's own
+  # entry sits at the last index, so every listed name is one git will read.
   for name in $names; do
-    case "$line" in
-      *"$name="*) ;;
-      *) fail "env-names lists $name but export-env never assigns it" ;;
-    esac
+    armed_env "${inherited[@]}" | grep -q "^$name=" ||
+      fail "env-names lists $name but the arming never assigns it, even with the largest scope it extends"
   done
-  pass "fm-attribution-guard: env-names names exactly what export-env assigns"
+  pass "fm-attribution-guard: env-names names exactly what the arming assigns"
+}
+
+# The receiving shell may already carry a GIT_CONFIG_* scope of its own - the
+# captain's profile can set one - and writing entry 0 blind overwrote its first
+# entry and dropped the rest, silently discarding the user's git configuration
+# for every command the worker runs.
+test_arming_preserves_an_inherited_config_scope() {
+  local repo out
+  local inherited=(
+    GIT_CONFIG_COUNT=2
+    GIT_CONFIG_KEY_0=captain.first GIT_CONFIG_VALUE_0=kept-first
+    GIT_CONFIG_KEY_1=captain.second GIT_CONFIG_VALUE_1=kept-second
+  )
+  repo=$(new_repo inherited-scope)
+  out=$(armed_git_config "$repo" captain.first "${inherited[@]}")
+  [ "$out" = kept-first ] ||
+    fail "the arming dropped the inherited scope's first entry: got '$out'"
+  out=$(armed_git_config "$repo" captain.second "${inherited[@]}")
+  [ "$out" = kept-second ] ||
+    fail "the arming dropped the inherited scope's later entries: got '$out'"
+  out=$(armed_git_config "$repo" core.hooksPath "${inherited[@]}")
+  [ "$out" = "$HOOKS_DIR" ] ||
+    fail "the guard's own entry did not survive the inherited scope: got '$out'"
+  pass "fm-attribution-guard: the arming appends to an inherited config scope"
+}
+
+# A scope larger than a filtered launch environment can carry cannot be extended
+# without leaving git a scope whose middle entries the filter drops, which git
+# rejects outright. The guard's own entry is the one that may not be lost, so
+# such a scope is replaced and the replacement is said out loud.
+test_arming_replaces_a_scope_it_cannot_extend() {
+  local repo out err i=0
+  local inherited=(GIT_CONFIG_COUNT=16)
+  repo=$(new_repo oversized-scope)
+  while [ "$i" -lt 16 ]; do
+    inherited+=("GIT_CONFIG_KEY_$i=captain.probe" "GIT_CONFIG_VALUE_$i=inherited")
+    i=$((i + 1))
+  done
+  err=$(armed_env "${inherited[@]}" 2>&1 >/dev/null)
+  case "$err" in
+    *"replaced rather than extended"*) ;;
+    *) fail "an unextendable scope was replaced without saying so: $err" ;;
+  esac
+  out=$(armed_git_config "$repo" core.hooksPath "${inherited[@]}" 2>/dev/null)
+  [ "$out" = "$HOOKS_DIR" ] ||
+    fail "the guard was not armed after an unextendable scope was replaced: got '$out'"
+  out=$(armed_git_config "$repo" captain.probe "${inherited[@]}" 2>/dev/null) || out=
+  [ -z "$out" ] || fail "the replaced scope still reported an inherited entry: got '$out'"
+  pass "fm-attribution-guard: a scope too large to extend is replaced, not silently half-kept"
+}
+
+# A path check whose feeder failed sees no paths at all and would report the
+# commit clean, which is the failure the push side already refuses to swallow.
+test_a_failed_path_listing_refuses_rather_than_passes() {
+  local dir out rc=0
+  dir="$TMP_ROOT/no-repo"
+  mkdir -p "$dir"
+  out=$(cd "$dir" && "$ROOT/bin/fm-attribution-guard.sh" check-staged 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] ||
+    fail "a path check whose listing failed reported the commit clean: $out"
+  assert_contains "$out" "could not be checked" \
+    "the refusal did not say the changed paths went unchecked"
+  pass "fm-attribution-guard: a path listing that fails refuses instead of checking nothing"
+}
+
+# git writes a committed symlink out as a plain text file holding its target
+# when core.symlinks is off. The hard stop stays - a worker whose commits run no
+# hook must not launch - but the refusal has to name that cause and its recovery
+# rather than only reporting the hooks as missing.
+test_export_env_names_unmaterialised_symlinks() {
+  local stage out rc=0 name
+  stage="$TMP_ROOT/placeholder-hooks/bin"
+  mkdir -p "$stage/git-hooks"
+  cp "$ROOT/bin/fm-attribution-guard.sh" "$ROOT/bin/fm-git-tracked-lib.sh" "$stage/"
+  chmod +x "$stage/fm-attribution-guard.sh"
+  for name in commit-msg pre-commit pre-push; do
+    printf '../fm-attribution-guard.sh' > "$stage/git-hooks/$name"
+    chmod 644 "$stage/git-hooks/$name"
+  done
+  out=$("$stage/fm-attribution-guard.sh" export-env 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "export-env armed hooks git will not run: $out"
+  assert_contains "$out" "core.symlinks" "the refusal did not name why the hooks are not links"
+  assert_contains "$out" "git config core.symlinks true" "the refusal named no recovery"
+  assert_contains "$out" "git checkout -- bin/git-hooks" "the recovery did not re-materialise the directory"
+  pass "fm-attribution-guard: a hooks directory git checked out as text names its cause and recovery"
 }
 
 # The tier split exists so real people keep committing, and an unanchored token
@@ -1305,7 +1411,11 @@ test_human_coauthor_commit_is_accepted
 test_human_named_claude_is_accepted
 test_human_at_a_github_private_address_is_accepted
 test_bots_at_a_github_private_address_are_refused
-test_env_names_covers_every_name_export_env_assigns
+test_env_names_covers_every_name_the_arming_assigns
+test_arming_preserves_an_inherited_config_scope
+test_arming_replaces_a_scope_it_cannot_extend
+test_a_failed_path_listing_refuses_rather_than_passes
+test_export_env_names_unmaterialised_symlinks
 test_humans_whose_names_contain_agent_tokens_are_accepted
 test_agent_vendor_domain_coauthor_is_refused
 test_vendor_address_alone_refuses_a_coauthor_line

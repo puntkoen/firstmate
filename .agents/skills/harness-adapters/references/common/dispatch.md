@@ -18,7 +18,7 @@ The inherited dispatch file applies the same best-fit profiles there.
 
 The captain's projects carry no reference to an AI agent, and that boundary is enforced in two places.
 `../../../bin/fm-spawn.sh` switches a harness's own commit and pull-request byline off where the harness offers a control, and arms `../../../bin/fm-attribution-guard.sh` in every task copy regardless of harness.
-Only claude has a verified local control; codex's attribution is a per-workspace backend flag with no local key, and the remaining adapters are unmeasured.
+Only claude has a verified local control; codex's attribution is a per-workspace backend flag with no local key, and every remaining adapter is treated as unprotected because no control has been established for it - which is precisely why the guard is the guarantee.
 `../../../docs/verification/agent-attribution.md` holds the dated per-harness evidence and is what a new or upgraded adapter refreshes.
 Treat a missing control as normal rather than as a blocker: the guard is the guarantee, and adding a control is an improvement on top of it.
 

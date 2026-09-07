@@ -16,9 +16,11 @@ TMP_ROOT=$(fm_test_tmproot fm-spawn-attribution)
 HOOKS_DIR=$("$ROOT/bin/fm-attribution-guard.sh" hooks-dir)
 
 # Fake tmux that logs the payload of BOTH send forms - the text line
-# (`send-keys -t <target> <text> Enter`) that carries the exports and the
+# (`send-keys -t <target> <text> Enter`) that carries the shell setup and the
 # literal (`send-keys -t <target> -l <text>`) that carries the launch command -
-# one per line in send order, so ordering between them is observable.
+# one per line in send order, so ordering between them is observable. A literal
+# payload is written with a `launch: ` prefix, because which form carried a line
+# is what the tests below need and the payloads themselves are ordinary shell.
 make_attribution_fakebin() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
@@ -41,13 +43,14 @@ case "${1:-}" in
     if [ -n "${FM_FAKE_LAUNCH_LOG:-}" ]; then
       shift
       skip_next=
+      literal=
       for a in "$@"; do
         if [ -n "$skip_next" ]; then skip_next=; continue; fi
         case "$a" in
           -t) skip_next=1; continue ;;
-          -l) continue ;;
+          -l) literal=1; continue ;;
           Enter|C-m) continue ;;
-          *) printf '%s\n' "$a" >> "$FM_FAKE_LAUNCH_LOG" ;;
+          *) printf '%s%s\n' "${literal:+launch: }" "$a" >> "$FM_FAKE_LAUNCH_LOG" ;;
         esac
       done
     fi
@@ -96,8 +99,8 @@ test_spawn_arms_the_guard_before_launch() {
 
   assert_grep "core.hooksPath" "$log" "the spawn never armed the attribution guard in the pane"
   assert_grep "$HOOKS_DIR" "$log" "the arming did not point at the tracked hooks directory"
-  guard_line=$(grep -n 'GIT_CONFIG_KEY_0=core.hooksPath' "$log" | tail -1 | cut -d: -f1)
-  launch_line=$(grep -nv '^export ' "$log" | tail -1 | cut -d: -f1)
+  guard_line=$(grep -nF 'GIT_CONFIG_KEY_$fm_guard_gc=core.hooksPath' "$log" | tail -1 | cut -d: -f1)
+  launch_line=$(grep -n '^launch: ' "$log" | tail -1 | cut -d: -f1)
   [ -n "$guard_line" ] || fail "no arming line was recorded"
   [ -n "$launch_line" ] || fail "no launch command was recorded"
   [ "$guard_line" -lt "$launch_line" ] ||
@@ -119,7 +122,7 @@ test_arming_is_harness_independent() {
       fm_test_run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN" \
       "$id" "$PROJ_DIR" --mode no-mistakes --yolo off)
     expect_code 0 $? "spawn on $harness failed: $out"
-    assert_grep "GIT_CONFIG_KEY_0=core.hooksPath" "$log" \
+    assert_grep 'GIT_CONFIG_KEY_$fm_guard_gc=core.hooksPath' "$log" \
       "the $harness spawn did not arm the attribution guard"
   done
   pass "fm-spawn: every harness gets the same arming"
@@ -135,7 +138,7 @@ test_spawn_refuses_when_the_arming_cannot_be_delivered() {
   log="$TMP_ROOT/arming-undeliverable/launch.log"
   : > "$log"
 
-  out=$(FM_FAKE_LAUNCH_LOG="$log" FM_FAKE_SEND_FAIL_MATCH='GIT_CONFIG_KEY_0=core.hooksPath' \
+  out=$(FM_FAKE_LAUNCH_LOG="$log" FM_FAKE_SEND_FAIL_MATCH='=core.hooksPath' \
     fm_test_run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN" \
     "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1) || rc=$?
   [ "$rc" -ne 0 ] || fail "the spawn launched a worker although the arming never reached the pane"
@@ -168,8 +171,8 @@ test_guard_survives_a_filtered_launch_environment() {
     "$id" "$PROJ_DIR" --mode no-mistakes --yolo off)
   expect_code 0 $? "spawn under a launch-env allowlist failed: $out"
 
-  exports=$(grep '^export ' "$log")
-  launch=$(grep -v '^export ' "$log" | tail -1)
+  exports=$(grep -v '^launch: ' "$log")
+  launch=$(sed -n 's/^launch: //p' "$log" | tail -1)
   case "$launch" in
     "/usr/bin/env -i "*) ;;
     *) fail "the allowlist did not filter the launch environment: $launch" ;;

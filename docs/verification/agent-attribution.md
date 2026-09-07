@@ -15,10 +15,12 @@ The refusal is harness-independent, so a harness with no control at all - and a 
 | --- | --- | --- | --- |
 | claude 2.1.236 | `Co-Authored-By:` trailer and a `Claude-Session:` trailer | yes: `attribution.commit`, `attribution.pr`, `attribution.sessionUrl`, plus deprecated `includeCoAuthoredBy` | both layers |
 | codex-cli 0.147.0 | a `Co-authored-by: Codex <noreply@openai.com>` trailer and a generated-with line in PR bodies | no: the behavior is driven by a `commit_attribution_enabled` flag the backend sends per workspace | the refusal only |
-| opencode, pi, pi-signed, grok, kimi, cursor, gemini, muse | not measured; none installed on the verification host | not established | the refusal only |
+| opencode, pi, pi-signed, grok, kimi, cursor, gemini, muse | not measured; none installed on the verification host | none established, so treated as absent | the refusal only |
 
-The last row is a gap in this record, not a claim that those harnesses are clean.
-Refresh it on a host where they are installed, using the same commands below.
+Those eight adapters are treated as UNPROTECTED: no suppression control has been established for any of them, so firstmate assumes they have none and switches nothing off at the source for them.
+That is the deliberate safe default rather than an open question, and it is exactly why layer 2 exists - the guard refuses the attribution at commit time whatever the harness emits, so an adapter with no control is covered anyway.
+A control read from a vendor's documentation would not change this: an unrun switch is as unproven as an instruction in a brief, and this record carries only what was measured on a host.
+The default is therefore replaced only by a measurement: install the adapter, run the commands below, and record the result.
 
 ### claude 2.1.236
 
@@ -69,7 +71,11 @@ ok - fm-attribution-guard: a human co-author still commits
 ok - fm-attribution-guard: a human whose name is also a product name still commits
 ok - fm-attribution-guard: a human at GitHub's private address still commits
 ok - fm-attribution-guard: a bot at GitHub's private address is still refused
-ok - fm-attribution-guard: env-names names exactly what export-env assigns
+ok - fm-attribution-guard: env-names names exactly what the arming assigns
+ok - fm-attribution-guard: the arming appends to an inherited config scope
+ok - fm-attribution-guard: a scope too large to extend is replaced, not silently half-kept
+ok - fm-attribution-guard: a path listing that fails refuses instead of checking nothing
+ok - fm-attribution-guard: a hooks directory git checked out as text names its cause and recovery
 ok - fm-attribution-guard: a human whose name contains an agent token still commits
 ok - fm-attribution-guard: a co-author at an agent vendor host refuses the commit
 ok - fm-attribution-guard: an agent vendor address alone refuses the co-author line
@@ -164,7 +170,7 @@ Only what the project does not carry yet is refused or excluded, which is the ca
 ## Arming, and what it deliberately does not touch
 
 Git resolves hooks from the shared `.git/hooks` of the common directory, so installing them there would write into the project and follow the captain's own checkout around, which `AGENTS.md` hard rule 1 forbids.
-`GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_0` / `GIT_CONFIG_VALUE_0` set `core.hooksPath` as its own configuration scope for the processes that inherit the task copy's shell, which reaches an ordinary `git commit` and writes nothing into the repository:
+`GIT_CONFIG_COUNT` and a `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` pair set `core.hooksPath` as its own configuration scope for the processes that inherit the task copy's shell, which reaches an ordinary `git commit` and writes nothing into the repository:
 
 ```
 $ git config --local --get core.hooksPath ; echo "exit=$?"
@@ -175,9 +181,14 @@ $ GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/tmp/hoo
 
 Verified on git 2.50.1 (Apple Git-155).
 
+That scope is INDEXED, and the shell the arming is sent to may already carry one of its own - the captain's profile can set `GIT_CONFIG_COUNT` with entries in it.
+Writing entry 0 blind overwrote the first of those and dropped the rest, silently discarding the user's git configuration for every command the worker runs, so the arming reads the count it finds and appends after it.
+`n` is therefore decided by the receiving shell, which is why every index a filtered launch environment must carry is listed by `env-names` rather than named in one place: git rejects the whole scope, not only the guard's entry, when a middle index is missing.
+A scope with more entries than that window holds is replaced rather than extended, and the receiving shell says so on stderr - the guard's own entry is the one that may not be lost.
+
 A launch path that FILTERS the environment defeats the arming as completely as unsetting it, without anyone unsetting anything.
-`config/launch-env-allowlist` is such a path: it rewrites the launch as `/usr/bin/env -i <retained names> /bin/sh -c '<launch>'`, and it dropped the three arming names, so a worker launched under that supported feature committed with no hook at all.
-`bin/fm-attribution-guard.sh env-names` is now the one owner of those names, `bin/fm-spawn.sh` reads the list from there and retains it unconditionally, and a spawn that cannot obtain it refuses to launch rather than starting an unguarded worker.
+`config/launch-env-allowlist` is such a path: it rewrites the launch as `/usr/bin/env -i <retained names> /bin/sh -c '<launch>'`, and it dropped the arming's names, so a worker launched under that supported feature committed with no hook at all.
+`bin/fm-attribution-guard.sh env-names` is now the one owner of those names, including every index the arming may append at, `bin/fm-spawn.sh` reads the list from there and retains it unconditionally, and a spawn that cannot obtain it refuses to launch rather than starting an unguarded worker.
 `tests/fm-spawn-attribution.test.sh` proves it by running the launch environment a real spawn produced and committing through it.
 The remote job paths (`bin/fm-remote-entrypoint.sh`, `bin/fm-remote-job-worker.sh`) also use `env -i`, but they compose the environment of a Firstmate command rather than of a worker's pane, and that command arms its own pane afterwards, so they are not on this boundary.
 

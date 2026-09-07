@@ -49,6 +49,11 @@
 #     would defeat it the same way without anyone unsetting anything, which is
 #     why `env-names` exists: bin/fm-spawn.sh reads the names from here and
 #     retains them through config/launch-env-allowlist's `/usr/bin/env -i`.
+#   - The arming APPENDS to whatever GIT_CONFIG_* scope the receiving shell
+#     already carries, so a scope the captain's profile set keeps working. A
+#     scope with more entries than a filtered launch environment can carry is
+#     replaced rather than extended, and the receiving shell says so on stderr:
+#     the guard's own entry is the one that may not be lost.
 #   - Pull request titles and bodies never reach a git hook. Harness-side
 #     suppression and the crewmate brief cover those.
 #   - Both passes peel a leading `#` and judge what it hides. git cleans a
@@ -77,6 +82,9 @@
 #     is on an agent host.
 #   - The pre-push pass checks at most 1000 outgoing commits per ref, newest
 #     first, and says on stderr when a push exceeds that.
+#   - A git command that fails while listing a commit's changed paths stops the
+#     commit or push with exit 2 rather than reporting it clean, for the same
+#     reason outgoing_range refuses to swallow an unbounded range.
 #   - push-to-checkout, proc-receive, and fsmonitor-watchman have no
 #     pass-through, because git's behaviour when one of them is absent is not
 #     the same as a hook that exits 0, so a pass-through would silently change
@@ -94,6 +102,8 @@ GUARD_BIN_DIR=$(cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 case "$GUARD_BIN_DIR" in
   */git-hooks) GUARD_BIN_DIR=${GUARD_BIN_DIR%/git-hooks} ;;
 esac
+# This file's own name, which is also what every bin/git-hooks symlink points at.
+GUARD_SCRIPT_NAME=$(basename -- "${BASH_SOURCE[0]}")
 # shellcheck source=bin/fm-git-tracked-lib.sh
 . "$GUARD_BIN_DIR/fm-git-tracked-lib.sh"
 
@@ -206,7 +216,20 @@ comment_marker() {
   esac
   printf '%s' "$value"
 }
-COMMENT_MARKER=$(comment_marker)
+# Resolved on first use rather than at load, because core.hooksPath routes every
+# hook name through this file and most of them - reference-transaction fires per
+# ref transaction on commit, fetch, push and checkout - never read a message at
+# all. Only the two message rules need the marker, so the pass-through hooks and
+# the non-hook subcommands pay no `git config` fork for it. The answer is cached
+# in a global, so a run that does need it still reads git's configuration once.
+COMMENT_MARKER=
+COMMENT_MARKER_READ=0
+resolve_comment_marker() {
+  if [ "$COMMENT_MARKER_READ" -eq 0 ]; then
+    COMMENT_MARKER=$(comment_marker)
+    COMMENT_MARKER_READ=1
+  fi
+}
 # A session link is a transcript trailer whose value is a link or whose line
 # names an agent, or an agent URL as AGENT_URL_RE defines one.
 # Every line is put to every rule below, because one line can carry two
@@ -380,6 +403,7 @@ refuse() {  # <headline>
 # costs.
 scan_message() {
   local line text rest found=0
+  resolve_comment_marker
   while IFS= read -r line || [ -n "$line" ]; do
     text=$line
     rest=${text#"${text%%[![:space:]]*}"}
@@ -409,6 +433,7 @@ scan_message() {
 # this repository is configured with. Only that exact line counts, not one that
 # merely resembles it.
 scissors_line() {
+  resolve_comment_marker
   printf '%s ------------------------ >8 ------------------------\n' "$COMMENT_MARKER"
 }
 
@@ -431,6 +456,9 @@ message_before_scissors() {  # <marker>; copies file descriptor 0 up to it
 check_message() {  # <file>
   [ -f "${1:-}" ] || { echo "error: no such commit message file: ${1:-}" >&2; exit 2; }
   REASONS=()
+  # Resolved here so the `$(scissors_line)` subshell inherits the cached answer
+  # instead of reading git's configuration a second time of its own.
+  resolve_comment_marker
   scan_message < <(message_before_scissors "$(scissors_line)" < "$1") ||
     refuse "commit message carries agent attribution"
 }
@@ -449,12 +477,35 @@ scan_paths() {
   [ "$found" -eq 0 ]
 }
 
-# Process substitution, never a command substitution: bash drops NUL bytes from
-# $(...) output, which would silently destroy the -z separation.
+# The path list is materialised in a file before it is read, never piped
+# straight into scan_paths and never read through a command substitution: bash
+# drops NUL bytes from $(...) output, which would silently destroy the -z
+# separation, and a process substitution hides the feeding git command's exit
+# status, so a git that failed for any reason would hand scan_paths an empty
+# list and the commit or push would be allowed with no path check having run.
+# That is the failure outgoing_range already refuses to swallow - a guard that
+# silently checks nothing is worse than one that refuses too much - so a feeder
+# that fails stops the operation instead of passing it.
+scan_paths_of() {  # <command>...; scans the NUL-separated paths the command prints
+  local listing status=0
+  listing=$(mktemp "${TMPDIR:-/tmp}/fm-attribution-paths.XXXXXX") || {
+    echo "error: $SELF_NAME: no temporary file for the changed paths, so no path check could run" >&2
+    exit 2
+  }
+  if ! "$@" > "$listing"; then
+    rm -f "$listing"
+    echo "error: $SELF_NAME: '$*' failed, so the changed paths could not be checked" >&2
+    exit 2
+  fi
+  scan_paths < "$listing" || status=$?
+  rm -f "$listing"
+  return "$status"
+}
+
 check_staged() {
   REASONS=()
   BASE_REF=$(git rev-parse --verify --quiet HEAD) || BASE_REF=
-  scan_paths < <(git diff --cached --name-only --diff-filter=ACMR -z) ||
+  scan_paths_of git diff --cached --name-only --diff-filter=ACMR -z ||
     refuse "commit adds agent files"
 }
 
@@ -481,7 +532,7 @@ check_commits() {  # <rev>...
     else
       scope=--root
     fi
-    scan_paths < <(git diff-tree "$scope" --no-commit-id --name-only -r --diff-filter=ACMR -z "$rev") || {
+    scan_paths_of git diff-tree "$scope" --no-commit-id --name-only -r --diff-filter=ACMR -z "$rev" || {
       REASONS=("commit $short:" ${REASONS[@]+"${REASONS[@]}"})
       refuse "an outgoing commit adds agent files"
     }
@@ -528,26 +579,73 @@ original_hooks_dir() {
 # export-env resolves through this check rather than printing the line blind.
 CHECKED_HOOKS='commit-msg pre-commit pre-push'
 
-# The environment names export-env assigns, owned here rather than restated by
-# the caller. A launch path that filters the environment - config/launch-env-
+# GIT_CONFIG_* is an INDEXED scope, and the shell that receives the arming may
+# already carry one of its own - the captain's profile can set GIT_CONFIG_COUNT
+# with entries of its own. Writing entry 0 blind would overwrite the first of
+# those and drop the rest, silently discarding the user's git configuration for
+# every command the worker runs, so the arming appends at whatever count it
+# finds instead.
+#
+# That makes the index a number only the receiving shell knows, and every entry
+# of the scope has to survive the launch environment filter or git fails on the
+# whole scope rather than only on the guard's entry. The window below is what
+# reconciles the two: the arming appends only while the resulting index fits in
+# it, and env-names covers the window whole. A larger inherited scope than the
+# window holds is replaced rather than extended, with a line on stderr saying
+# so - the guard's entry is the one that may not be lost.
+ARMED_ENV_MAX_ENTRIES=16
+
+# The environment names export-env may assign, owned here rather than restated
+# by the caller. A launch path that filters the environment - config/launch-env-
 # allowlist rewrites the launch as `/usr/bin/env -i <retained names> ...` - has
 # to retain exactly these, and a name it does not know about is dropped
-# silently, leaving a worker whose commits run no hook at all. Reading the list
-# from the guard means adding a name here cannot leave such a filter behind.
-ARMED_ENV_NAMES=(GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0)
+# silently, leaving a worker whose commits run no hook at all - or, when the
+# dropped name is an inherited entry the guard's own entry now sits after, a
+# scope git rejects outright. Reading the list from the guard means adding a
+# name here cannot leave such a filter behind.
+armed_env_names() {
+  local i=0
+  printf '%s\n' GIT_CONFIG_COUNT
+  while [ "$i" -lt "$ARMED_ENV_MAX_ENTRIES" ]; do
+    printf 'GIT_CONFIG_KEY_%s\nGIT_CONFIG_VALUE_%s\n' "$i" "$i"
+    i=$((i + 1))
+  done
+}
+
+# A hook entry that is a regular file whose whole content is a path to this
+# script is what git writes when it checks a committed symlink out with
+# core.symlinks disabled: the link becomes a text file holding its target, which
+# is not executable and which git will not run. That is observable without
+# asking which operating system this is, and it is the difference between a
+# refusal that names its recovery and one that is a dead end.
+hook_is_unmaterialised_link() {  # <path>
+  local path=$1 content
+  [ -f "$path" ] || return 1
+  [ ! -L "$path" ] || return 1
+  content=$(head -c 4096 -- "$path" 2>/dev/null) || return 1
+  [[ $content == *[[:space:]]* ]] && return 1
+  [[ $content == *"$GUARD_SCRIPT_NAME" ]]
+}
 
 require_hooks_installed() {  # prints the hooks directory, or names what is missing
-  local dir name missing=
+  local dir name missing= unmaterialised=
   dir=$(hooks_dir)
   if [ ! -d "$dir" ]; then
     echo "error: $SELF_NAME: hook directory $dir does not exist, so the guard cannot be armed" >&2
     return 1
   fi
   for name in $CHECKED_HOOKS; do
-    [ -x "$dir/$name" ] || missing="${missing:+$missing }$name"
+    [ -x "$dir/$name" ] && continue
+    missing="${missing:+$missing }$name"
+    hook_is_unmaterialised_link "$dir/$name" &&
+      unmaterialised="${unmaterialised:+$unmaterialised }$name"
   done
   if [ -n "$missing" ]; then
     echo "error: $SELF_NAME: $dir has no executable $missing hook, so arming core.hooksPath there would leave commits unchecked" >&2
+    if [ -n "$unmaterialised" ]; then
+      echo "error: $SELF_NAME: $unmaterialised in $dir is a plain text file holding the path to $GUARD_SCRIPT_NAME rather than a symlink to it, which is how git checks the committed symlinks out when core.symlinks is disabled in this checkout" >&2
+      echo "error: $SELF_NAME: to try to re-materialise them as links, run in this repository: git config core.symlinks true && rm -rf bin/git-hooks && git checkout -- bin/git-hooks" >&2
+    fi
     return 1
   fi
   printf '%s\n' "$dir"
@@ -712,10 +810,15 @@ case "${1:-}" in
   check-staged) check_staged ;;
   check-commits) shift; [ "$#" -gt 0 ] || { usage >&2; exit 2; }; check_commits "$@" ;;
   hooks-dir) hooks_dir ;;
-  env-names) printf '%s\n' "${ARMED_ENV_NAMES[@]}" ;;
+  env-names) armed_env_names ;;
   export-env)
     GUARD_HOOKS_DIR=$(require_hooks_installed) || exit 1
-    printf 'export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=%s\n' \
+    # One POSIX-shell line, because that is what the pane shell is sent: it reads
+    # the count the receiving shell already has, refuses to trust a value that is
+    # not a plain number, and appends the guard's entry after the ones already
+    # there. Kept to the same builtins every launch path's shell has.
+    printf 'fm_guard_gc=${GIT_CONFIG_COUNT-}; case "$fm_guard_gc" in '"''"'|*[!0-9]*) fm_guard_gc=0 ;; esac; if [ "$fm_guard_gc" -ge %s ]; then printf %s "firstmate: fm-attribution-guard.sh: the inherited GIT_CONFIG scope has %s entries or more, which is past what a filtered launch environment can carry, so it is replaced rather than extended" >&2; fm_guard_gc=0; fi; export GIT_CONFIG_KEY_$fm_guard_gc=core.hooksPath GIT_CONFIG_VALUE_$fm_guard_gc=%s GIT_CONFIG_COUNT=$((fm_guard_gc + 1)); unset fm_guard_gc\n' \
+      "$ARMED_ENV_MAX_ENTRIES" "'%s\\n'" "$ARMED_ENV_MAX_ENTRIES" \
       "$(printf '%s\n' "$GUARD_HOOKS_DIR" | sed "s/'/'\\\\''/g; s/^/'/; s/\$/'/")"
     ;;
   *) usage >&2; exit 2 ;;
