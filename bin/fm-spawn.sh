@@ -3812,15 +3812,6 @@ spawn_record_traceparent() {
 # process (go build, go test, ...) inherit it. Sent before the launch command so
 # the env is set when the agent starts; the brief sleep lets the export land.
 spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
-# Mark the pane as a task worker so bin/fm-test-run.sh can refuse to run the
-# suite in the repository's primary checkout. Ship and scout workers are the
-# ones assigned an isolated worktree; a secondmate runs its own home instead.
-# The id reached a validated bare-slug charset above, so it carries no shell
-# syntax of its own.
-if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
-  spawn_send_text_line "$T" "export FM_TASK_ID=$ID"
-fi
-
 # Arm the attribution guard for every git command the worker runs in this pane.
 # GIT_CONFIG_* is its own config scope, so the hooks reach an ordinary
 # `git commit` without writing anything into the project's shared .git - which
@@ -3844,6 +3835,15 @@ fi
 if ! spawn_send_text_line "$T" "$ATTRIBUTION_GUARD_ENV"; then
   echo "error: could not deliver the attribution guard arming to $W's pane; refusing to launch a worker that could sign the captain's history" >&2
   exit 1
+fi
+
+# Mark the pane as a task worker so bin/fm-test-run.sh can refuse to run the
+# suite in the repository's primary checkout. Ship and scout workers are the
+# ones assigned an isolated worktree; a secondmate runs its own home instead.
+# The id reached a validated bare-slug charset above, so it carries no shell
+# syntax of its own.
+if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
+  spawn_send_text_line "$T" "export FM_TASK_ID=$ID"
 fi
 # Send through the exact channel that already ships GOTMPDIR, so every backend
 # and harness - ship, scout, and secondmate - gets it before launch. Skipped
