@@ -72,6 +72,7 @@ ok - fm-attribution-guard: a human whose name is also a product name still commi
 ok - fm-attribution-guard: a human at GitHub's private address still commits
 ok - fm-attribution-guard: a bot at GitHub's private address is still refused
 ok - fm-attribution-guard: env-names names exactly what the arming assigns
+ok - fm-attribution-guard: the arming line survives the interactive shell a pane runs
 ok - fm-attribution-guard: the arming appends to an inherited config scope
 ok - fm-attribution-guard: a scope too large to extend is replaced, not silently half-kept
 ok - fm-attribution-guard: a path listing that fails refuses instead of checking nothing
@@ -151,6 +152,7 @@ GitHub gives every account a private `<id>+<user>@users.noreply.github.com` addr
 The word still counts at a vendor host, `bot@` and `[bot]` are untouched, and GitHub's own bots all carry the `[bot]` suffix, so `github-actions[bot]` at that same private address keeps refusing.
 
 `tests/fm-spawn-attribution.test.sh` proves a real spawn delivers both layers, and `tests/fm-ensure-agents-md.test.sh` proves an UNTRACKED `CLAUDE.md` pointer is never left committable.
+It also proves both halves of the shared exclude file's read handling: a file that exists but cannot be read refuses the add and refuses the rollback rather than appending onto it or emptying it, because every worktree of the repository shares that one file.
 That includes a pointer an earlier run already wrote, which the script now brings under the ignore rule instead of reporting unchanged.
 
 ```
@@ -180,6 +182,12 @@ $ GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/tmp/hoo
 ```
 
 Verified on git 2.50.1 (Apple Git-155).
+
+The arming is not RUN by `bin/fm-spawn.sh`; it is typed into the worker's pane, and a pane runs the operator's own interactive login shell.
+An interactive shell expands history before it parses, so the line may carry no `!` at all - quoted or not, since zsh expands it inside double quotes too, and neither `nobanghist` nor a rewritten `histchars` is something this side can rely on the operator having.
+A line that carried one was discarded whole by zsh with "event not found", and the worker then launched with no `core.hooksPath` and committed with no hook, while `send-keys`, the launch, and the test suite all reported success.
+The count is therefore validated by matching the values it may have rather than the characters it may not, and `tests/fm-attribution-guard.test.sh` drives the real line through `zsh -f -i` and `bash --noprofile --norc -i` and reads git's own answer plus a real commit's verdict back.
+The rest of the line was checked for the same class: `^` quick substitution, `#` interactive comments, `~` expansion, brace expansion, `%` job references, a word opening with `=` under zsh, and an unquoted glob under `nomatch` - none of them appear outside a single-quoted string or a `case` pattern, and the emitted text is one line.
 
 That scope is INDEXED, and the shell the arming is sent to may already carry one of its own - the captain's profile can set `GIT_CONFIG_COUNT` with entries in it.
 Writing entry 0 blind overwrote the first of those and dropped the rest, silently discarding the user's git configuration for every command the worker runs, so the arming reads the count it finds and appends after it.

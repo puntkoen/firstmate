@@ -595,6 +595,40 @@ CHECKED_HOOKS='commit-msg pre-commit pre-push'
 # so - the guard's entry is the one that may not be lost.
 ARMED_ENV_MAX_ENTRIES=16
 
+# The arming line is TYPED INTO THE PANE, and a pane runs the operator's own
+# interactive login shell, which applies history expansion before it parses
+# anything. An interactive zsh therefore discards a whole line carrying `!` -
+# "event not found" - and the worker then launches with no core.hooksPath and
+# commits with no hook, while every visible signal reports success. So the line
+# may carry no history-expansion character at all, quoted or not: inside double
+# quotes zsh still expands it, and neither `nobanghist` nor a rewritten
+# `histchars` is something this side can rely on the operator having.
+#
+# That is why the count is validated by matching the values it MAY have rather
+# than the characters it may not. The first list is the window itself, the
+# second is what a plain decimal number looks like, and a value that is a number
+# but outside the window is the one case that says something on stderr.
+ARMED_INDEX_MAX_DIGITS=5
+
+armed_index_patterns() {  # the case alternation for every index the window holds
+  local i=0 out=
+  while [ "$i" -lt "$ARMED_ENV_MAX_ENTRIES" ]; do
+    out="${out:+$out|}$i"
+    i=$((i + 1))
+  done
+  printf '%s' "$out"
+}
+
+armed_number_patterns() {  # the case alternation for a plain decimal number
+  local i=1 digits= out=
+  while [ "$i" -le "$ARMED_INDEX_MAX_DIGITS" ]; do
+    digits="$digits[0-9]"
+    out="${out:+$out|}$digits"
+    i=$((i + 1))
+  done
+  printf '%s' "$out"
+}
+
 # The environment names export-env may assign, owned here rather than restated
 # by the caller. A launch path that filters the environment - config/launch-env-
 # allowlist rewrites the launch as `/usr/bin/env -i <retained names> ...` - has
@@ -814,11 +848,14 @@ case "${1:-}" in
   export-env)
     GUARD_HOOKS_DIR=$(require_hooks_installed) || exit 1
     # One POSIX-shell line, because that is what the pane shell is sent: it reads
-    # the count the receiving shell already has, refuses to trust a value that is
-    # not a plain number, and appends the guard's entry after the ones already
-    # there. Kept to the same builtins every launch path's shell has.
-    printf 'fm_guard_gc=${GIT_CONFIG_COUNT-}; case "$fm_guard_gc" in '"''"'|*[!0-9]*) fm_guard_gc=0 ;; esac; if [ "$fm_guard_gc" -ge %s ]; then printf %s "firstmate: fm-attribution-guard.sh: the inherited GIT_CONFIG scope has %s entries or more, which is past what a filtered launch environment can carry, so it is replaced rather than extended" >&2; fm_guard_gc=0; fi; export GIT_CONFIG_KEY_$fm_guard_gc=core.hooksPath GIT_CONFIG_VALUE_$fm_guard_gc=%s GIT_CONFIG_COUNT=$((fm_guard_gc + 1)); unset fm_guard_gc\n' \
-      "$ARMED_ENV_MAX_ENTRIES" "'%s\\n'" "$ARMED_ENV_MAX_ENTRIES" \
+    # the count the receiving shell already has, keeps it only when it is one of
+    # the indexes the window holds, and appends the guard's entry after the ones
+    # already there. An empty or unusable count starts a scope of its own, which
+    # is the ordinary case and says nothing. Kept to the same builtins every
+    # launch path's shell has, and to characters an interactive shell leaves
+    # alone - see ARMED_ENV_MAX_ENTRIES above for what may not appear here.
+    printf 'fm_guard_gc=${GIT_CONFIG_COUNT-}; case "$fm_guard_gc" in %s) ;; %s) printf %s "firstmate: fm-attribution-guard.sh: the inherited GIT_CONFIG scope has %s entries or more, which is past what a filtered launch environment can carry, so it is replaced rather than extended" >&2; fm_guard_gc=0 ;; *) fm_guard_gc=0 ;; esac; export GIT_CONFIG_KEY_$fm_guard_gc=core.hooksPath GIT_CONFIG_VALUE_$fm_guard_gc=%s GIT_CONFIG_COUNT=$((fm_guard_gc + 1)); unset fm_guard_gc\n' \
+      "$(armed_index_patterns)" "$(armed_number_patterns)" "'%s\\n'" "$ARMED_ENV_MAX_ENTRIES" \
       "$(printf '%s\n' "$GUARD_HOOKS_DIR" | sed "s/'/'\\\\''/g; s/^/'/; s/\$/'/")"
     ;;
   *) usage >&2; exit 2 ;;

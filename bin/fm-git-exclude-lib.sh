@@ -39,17 +39,41 @@ fm_git_exclude_file() {  # <work-dir>
 # its own is warranted.
 FM_GIT_EXCLUDE_ADDED=0
 
+# The presence test reads the same file the remove side does, and answers the
+# same way when it cannot read it: grep exits 1 when the entry is genuinely
+# absent and 2 or more when the file could not be read at all. Reading both as
+# "absent" appended the entry to a file this call had failed to read, and the
+# newline probe below failed for the same reason, so the entry was joined onto
+# an unterminated last line and rewrote the rule already there - in a file every
+# worktree of the repository shares. A file that exists but cannot be read is
+# therefore left exactly as it is and the add refuses. A file that does not
+# exist yet is not that case: the append creates it.
 fm_git_exclude_add() {  # <work-dir> <entry>
-  local dir=$1 entry=$2 excl lock rc=0
+  local dir=$1 entry=$2 excl lock last present=0 status=0 rc=0
   FM_GIT_EXCLUDE_ADDED=0
   excl=$(fm_git_exclude_file "$dir") || return 1
   mkdir -p "$(dirname "$excl")" || return 1
   lock="$excl.fm-lock"
   fm_lock_acquire_wait "$lock" || return 1
-  if ! grep -qxF -- "$entry" "$excl" 2>/dev/null; then
+  if [ -e "$excl" ]; then
+    grep -qxF -- "$entry" "$excl" || status=$?
+    if [ "$status" -ge 2 ]; then
+      echo "error: fm_git_exclude_add: could not read $excl, so it is left untouched and $entry was not added" >&2
+      rc=1
+    elif [ "$status" -eq 0 ]; then
+      present=1
+    fi
+  fi
+  if [ "$rc" -eq 0 ] && [ "$present" -eq 0 ]; then
     # An unterminated last line would otherwise swallow the new entry.
-    if [ -s "$excl" ] && [ -n "$(tail -c 1 "$excl")" ]; then
-      printf '\n' >> "$excl" || rc=1
+    if [ -s "$excl" ]; then
+      last=$(tail -c 1 "$excl") || {
+        echo "error: fm_git_exclude_add: could not read the end of $excl, so it is left untouched and $entry was not added" >&2
+        rc=1
+      }
+      if [ "$rc" -eq 0 ] && [ -n "$last" ]; then
+        printf '\n' >> "$excl" || rc=1
+      fi
     fi
     if [ "$rc" -eq 0 ]; then
       if printf '%s\n' "$entry" >> "$excl"; then

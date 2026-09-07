@@ -418,6 +418,16 @@ Co-authored-by: Claude <noreply@mail.anthropic.com>" 2>&1) &&
   pass "fm-attribution-guard: a bot at GitHub's private address is still refused"
 }
 
+# The interactive shells present on this host, with the flags that start each
+# one interactive and rc-free, one per line. A host without one of them skips
+# that case rather than failing the suite over a shell it does not have.
+interactive_shells() {
+  local bin
+  bin=$(command -v zsh 2>/dev/null) && [ -n "$bin" ] && printf '%s -f -i\n' "$bin"
+  bin=$(command -v bash 2>/dev/null) && [ -n "$bin" ] && printf '%s --noprofile --norc -i\n' "$bin"
+  return 0
+}
+
 # Runs the arming the way the pane shell runs it - from an empty environment
 # plus whatever scope is handed in - and prints the GIT_CONFIG_* environment it
 # leaves behind, one NAME=value per line.
@@ -461,6 +471,60 @@ test_env_names_covers_every_name_the_arming_assigns() {
       fail "env-names lists $name but the arming never assigns it, even with the largest scope it extends"
   done
   pass "fm-attribution-guard: env-names names exactly what the arming assigns"
+}
+
+# bin/fm-spawn.sh does not RUN the arming line, it TYPES it into the worker's
+# pane, and a pane runs the operator's own interactive login shell. An
+# interactive shell expands history before it parses anything, so a line
+# carrying `!` was thrown away whole by zsh - "event not found" - and the worker
+# then launched with no core.hooksPath and committed with no hook at all, while
+# send-keys, the launch, and this suite all reported success. Every other case
+# here runs the line through a non-interactive shell, which is not the shell
+# that receives it, so this one drives the real thing through the interactive
+# shells a pane can run and reads git's own answers back.
+test_arming_survives_the_interactive_shell_a_pane_runs() {
+  local repo shell flags name answer verdict clean tainted_msg clean_msg ran=0
+  repo=$(new_repo interactive-arming)
+  tainted_msg="$TMP_ROOT/interactive-tainted.msg"
+  clean_msg="$TMP_ROOT/interactive-clean.msg"
+  printf 'feat: add a\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>\n' > "$tainted_msg"
+  printf 'feat: add a\n\nCo-authored-by: Jane Doe <jane@example.com>\n' > "$clean_msg"
+  while read -r shell flags; do
+    [ -n "$shell" ] || continue
+    name=$(basename "$shell")
+    answer="$TMP_ROOT/interactive-$name.hookspath"
+    verdict="$TMP_ROOT/interactive-$name.verdict"
+    clean="$TMP_ROOT/interactive-$name.clean"
+    rm -f "$answer" "$verdict" "$clean"
+    printf 'work-%s\n' "$name" > "$repo/a.txt"
+    unarmed_git -C "$repo" add a.txt || fail "could not stage the fixture change for $name"
+    # shellcheck disable=SC2016 # $? must be expanded by the receiving shell.
+    printf '%s\n' \
+      "$ARMING_LINE" \
+      "cd $(printf '%q' "$repo") || exit 1" \
+      "git config --get core.hooksPath > $(printf '%q' "$answer") 2>&1" \
+      "git commit -F $(printf '%q' "$tainted_msg") > $(printf '%q' "$verdict") 2>&1; printf 'rc=%s\n' \"\$?\" >> $(printf '%q' "$verdict")" \
+      "git commit -F $(printf '%q' "$clean_msg") > $(printf '%q' "$clean") 2>&1; printf 'rc=%s\n' \"\$?\" >> $(printf '%q' "$clean")" \
+      "exit 0" |
+      env -i PATH="$PATH" HOME="$TMP_ROOT" "$shell" $flags >/dev/null 2>&1
+    [ -f "$answer" ] ||
+      fail "an interactive $name never ran the arming line, so the worker would launch unguarded"
+    [ "$(cat "$answer")" = "$HOOKS_DIR" ] ||
+      fail "an interactive $name did not arm the guard: git answered '$(cat "$answer")'"
+    grep -qxF 'rc=0' "$verdict" &&
+      fail "an interactive $name committed agent attribution: $(cat "$verdict")"
+    assert_contains "$(cat "$verdict")" "no reference to an AI agent" \
+      "the commit under an interactive $name failed for some other reason than the guard"
+    grep -qxF 'rc=0' "$clean" ||
+      fail "an interactive $name could not commit ordinary work at all: $(cat "$clean")"
+    [ "$(head_subject "$repo")" = "feat: add a" ] ||
+      fail "the clean commit did not land under an interactive $name"
+    ran=$((ran + 1))
+  done <<EOF
+$(interactive_shells)
+EOF
+  [ "$ran" -gt 0 ] || fail "no interactive shell was available, so the arming line went untested"
+  pass "fm-attribution-guard: the arming line survives the interactive shell a pane runs"
 }
 
 # The receiving shell may already carry a GIT_CONFIG_* scope of its own - the
@@ -1412,6 +1476,7 @@ test_human_named_claude_is_accepted
 test_human_at_a_github_private_address_is_accepted
 test_bots_at_a_github_private_address_are_refused
 test_env_names_covers_every_name_the_arming_assigns
+test_arming_survives_the_interactive_shell_a_pane_runs
 test_arming_preserves_an_inherited_config_scope
 test_arming_replaces_a_scope_it_cannot_extend
 test_a_failed_path_listing_refuses_rather_than_passes

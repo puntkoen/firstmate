@@ -694,6 +694,39 @@ test_exclude_rollback_refuses_an_unreadable_file() {
   pass "fm-ensure-agents-md.sh: an unreadable exclude file is refused, not emptied"
 }
 
+# The presence test on the add side answers the same shared file the rollback
+# does, and reading "could not read it" as "the entry is absent" appended onto
+# an unterminated last line and rewrote the rule already there.
+test_exclude_add_refuses_an_unreadable_file() {
+  local repo excl saved rc=0 err
+  repo=$(new_git_project git-exclude-add-unreadable)
+  # shellcheck source=bin/fm-git-exclude-lib.sh
+  . "$ROOT/bin/fm-git-exclude-lib.sh"
+  excl=$(fm_git_exclude_file "$repo") || fail "could not resolve the repository's exclude file"
+  mkdir -p "$(dirname "$excl")"
+  # No trailing newline: the shape an unchecked append would corrupt.
+  printf '/.claude/settings.local.json' > "$excl"
+  saved="$TMP_ROOT/git-exclude-add-unreadable.expected"
+  cp "$excl" "$saved"
+  if [ "$(id -u)" = 0 ]; then
+    pass "fm-ensure-agents-md.sh: an unreadable exclude file refuses the add (skipped as root)"
+    return 0
+  fi
+  # Write-only, which is the destructive shape: grep cannot read it, while the
+  # append the old code fell through to succeeds.
+  chmod 200 "$excl"
+  err=$(fm_git_exclude_add "$repo" '/CLAUDE.md' 2>&1) || rc=$?
+  chmod 644 "$excl"
+  [ "$rc" -ne 0 ] || fail "an add that could not read the exclude file reported success"
+  cmp -s "$excl" "$saved" ||
+    fail "the unreadable exclude file was written to: $(cat "$excl")"
+  [ "$FM_GIT_EXCLUDE_ADDED" -eq 0 ] ||
+    fail "the refused add told its caller it had appended an entry"
+  assert_contains "$err" "could not read $excl" \
+    "the refusal did not name the file it could not read: $err"
+  pass "fm-ensure-agents-md.sh: an unreadable exclude file refuses the add"
+}
+
 # A project that tracks both a real AGENTS.md and a real CLAUDE.md carries two
 # memory files that can drift apart. Neither may be touched, and the run must
 # still say so rather than reporting the same success as a harmless pointer.
@@ -772,3 +805,4 @@ test_git_project_tracked_non_pointer_claude_is_kept_intact
 test_git_project_tracked_memory_file_beside_agents_is_reported
 test_exclude_rollback_keeps_a_concurrent_entry
 test_exclude_rollback_refuses_an_unreadable_file
+test_exclude_add_refuses_an_unreadable_file
