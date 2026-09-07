@@ -64,14 +64,24 @@ fm_git_exclude_add() {  # <work-dir> <entry>
   return "$rc"
 }
 
+# grep exits 1 when it selected nothing, which here means the file held our
+# entry and nothing else, and 2 or more when it could not read the file at all.
+# Reading both as "nothing survives" truncated a file this call had failed to
+# read, and the file is shared by every worktree of the repository, so that
+# silently dropped the captain's own ignore rules and any a parallel spawn had
+# just written. An unreadable file is therefore left exactly as it is and the
+# call refuses, with grep's own diagnostic left on stderr rather than discarded.
 fm_git_exclude_remove() {  # <work-dir> <entry>
-  local dir=$1 entry=$2 excl lock kept rc=0
+  local dir=$1 entry=$2 excl lock kept status=0 rc=0
   excl=$(fm_git_exclude_file "$dir") || return 1
   lock="$excl.fm-lock"
   fm_lock_acquire_wait "$lock" || return 1
   if [ -f "$excl" ]; then
-    kept=$(grep -vxF -- "$entry" "$excl" 2>/dev/null) || kept=
-    if [ -n "$kept" ]; then
+    kept=$(grep -vxF -- "$entry" "$excl") || status=$?
+    if [ "$status" -ge 2 ]; then
+      echo "error: fm_git_exclude_remove: could not read $excl, so it is left untouched and $entry stays in it" >&2
+      rc=1
+    elif [ -n "$kept" ]; then
       printf '%s\n' "$kept" > "$excl" || rc=1
     else
       : > "$excl" || rc=1

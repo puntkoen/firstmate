@@ -664,6 +664,36 @@ test_exclude_rollback_keeps_a_concurrent_entry() {
   pass "fm-ensure-agents-md.sh: a rollback keeps a concurrent writer's exclude entry"
 }
 
+# The exclude file is shared by every worktree of the repository, so a rollback
+# that cannot read it must leave it alone. Collapsing grep's "selected nothing"
+# into its "could not read" emptied the file instead, dropping every rule the
+# captain and any parallel spawn had put there.
+test_exclude_rollback_refuses_an_unreadable_file() {
+  local repo excl before after rc=0 err
+  repo=$(new_git_project git-exclude-unreadable)
+  # shellcheck source=bin/fm-git-exclude-lib.sh
+  . "$ROOT/bin/fm-git-exclude-lib.sh"
+  excl=$(fm_git_exclude_file "$repo") || fail "could not resolve the repository's exclude file"
+  mkdir -p "$(dirname "$excl")"
+  printf '/.claude/settings.local.json\n/CLAUDE.md\n' > "$excl"
+  before=$(cat "$excl")
+  if [ "$(id -u)" = 0 ]; then
+    pass "fm-ensure-agents-md.sh: an unreadable exclude file is refused, not emptied (skipped as root)"
+    return 0
+  fi
+  # Write-only, which is the destructive shape: grep cannot read it, while the
+  # truncating redirect the old code fell through to succeeds.
+  chmod 200 "$excl"
+  err=$(fm_git_exclude_remove "$repo" '/CLAUDE.md' 2>&1) || rc=$?
+  chmod 644 "$excl"
+  after=$(cat "$excl")
+  [ "$rc" -ne 0 ] || fail "a rollback that could not read the exclude file reported success"
+  [ "$after" = "$before" ] || fail "the unreadable exclude file was rewritten: $after"
+  assert_contains "$err" "could not read $excl" \
+    "the refusal did not name the file it could not read: $err"
+  pass "fm-ensure-agents-md.sh: an unreadable exclude file is refused, not emptied"
+}
+
 # A project that tracks both a real AGENTS.md and a real CLAUDE.md carries two
 # memory files that can drift apart. Neither may be touched, and the run must
 # still say so rather than reporting the same success as a harmless pointer.
@@ -741,3 +771,4 @@ test_git_project_tracked_symlink_pointer_is_kept
 test_git_project_tracked_non_pointer_claude_is_kept_intact
 test_git_project_tracked_memory_file_beside_agents_is_reported
 test_exclude_rollback_keeps_a_concurrent_entry
+test_exclude_rollback_refuses_an_unreadable_file

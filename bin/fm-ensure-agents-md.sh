@@ -45,7 +45,10 @@
 # uppercase-literal-target dangling-symlink hazard that a CLAUDE.md -> AGENTS.md
 # link would have carried for that same mismatch.
 # This is a worktree utility for crewmates, not a supervision script, so it does
-# not call fm-guard.sh.
+# not call fm-guard.sh. It does depend on the firstmate home all the same:
+# bin/fm-git-exclude-lib.sh takes its per-repository lock from bin/fm-wake-lib.sh,
+# whose load creates $FM_HOME/state. That is deliberate rather than a stray
+# dependency to clean up; bin/fm-wake-lib.sh owns what it sets up at load.
 # Usage: fm-ensure-agents-md.sh [repo-or-worktree-dir]
 set -eu
 
