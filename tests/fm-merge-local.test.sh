@@ -126,7 +126,17 @@ test_untracked_file_on_an_incoming_path_refuses_and_names_it() {
     "the refusal did not name the colliding path"
   assert_equals '.local-only-draft {}' "$(cat "$repo/$collision")" \
     "the refused local merge overwrote the untracked file it refused for"
-  pass "an untracked file on an incoming path refuses and names that path"
+
+  # git's own fast-forward would refuse this collision too, so the refusal is
+  # only proof of the guard if it carries the guard's wording and its guidance,
+  # and if no merge was ever run in the project to raise it.
+  assert_grep "REFUSED: merging fm/$id into main would overwrite work in $repo:" \
+    "$home/merge.err" "the refusal did not come from the local merge guard itself"
+  assert_grep 'Move or remove the named path, then retry.' "$home/merge.err" \
+    "the refusal did not tell the captain how to clear the collision"
+  assert_no_grep 'The following untracked working tree files' "$home/merge.err" \
+    "the guard let git run the merge and refuse for it"
+  pass "an untracked file on an incoming path refuses, names that path, and never reaches the merge"
 }
 
 test_modified_or_staged_tracked_files_still_refuse() {
