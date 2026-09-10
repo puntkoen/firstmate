@@ -14,6 +14,10 @@
 # Modified or staged TRACKED files always refuse. Untracked files refuse only
 # when the incoming range puts a file at one of their paths, so a scratch
 # directory the captain keeps on purpose no longer blocks an unrelated landing.
+# A GITIGNORED local file is not covered: git's own collision check honours the
+# exclude list, so a fast-forward overwrites it without a word. That was equally
+# true of the previous `git status --porcelain` guard, which never listed
+# ignored files either; this guard does not narrow it and does not fix it.
 #
 # The task's existing per-task control lock serializes the captain-hold check
 # through that fast-forward. A still-held or unreadable row refuses before the
@@ -126,6 +130,9 @@ fi
 # collision; ask it in dry-run form (-n keeps the index and working tree
 # untouched) rather than reimplementing the path comparison here. It runs after
 # the ancestor check because a two-tree merge only describes a fast-forward.
+# The authority has one documented blind spot, inherited rather than introduced:
+# read-tree honours .gitignore, so a gitignored local file on an incoming path
+# is reported as no collision and the fast-forward silently replaces it.
 tree_check_status=0
 tree_check=$(git -C "$PROJ" read-tree -n -u -m "$DEFAULT" "$BRANCH" 2>&1) || tree_check_status=$?
 if [ "$tree_check_status" -ne 0 ]; then

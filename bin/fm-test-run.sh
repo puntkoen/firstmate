@@ -1354,6 +1354,10 @@ families_for_changed_path() {
     bin/fm-pr-*|bin/fm-merge-local.sh|bin/fm-teardown.sh|bin/fm-review-diff.sh|\
     bin/fm-x-*|bin/fm-check*)
       printf '%s\n' pr-forge
+      # The local merge gate-action's own working-tree guard. Referenced by
+      # script rather than added to pr-forge: that family carries a recorded
+      # concurrency proof this suite has not been through.
+      printf '%s\n' __script__:fm-merge-local.test.sh
       ;;
     bin/fm-nm-run-lib.sh)
       # Shared no-mistakes run-attribution primitives, sourced by both

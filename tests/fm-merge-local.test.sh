@@ -16,6 +16,11 @@ set -u
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+# An exported TASKS_AXI_BACKEND outranks the fixture's own .tasks.toml in
+# fm_tasks_axi_backend_resolve, so the merge-authority check must start from a
+# clean slate before the fixtures pin the backend themselves.
+unset TASKS_AXI_BACKEND || :
+
 TMP_ROOT=$(fm_test_tmproot fm-merge-local)
 
 # A home with no backlog at all: no captain call can be recorded, so the merge
@@ -24,6 +29,9 @@ TMP_ROOT=$(fm_test_tmproot fm-merge-local)
 make_home() {  # <name>
   local home="$TMP_ROOT/$1" fakebin
   mkdir -p "$home/data" "$home/state" "$home/config" "$home/projects"
+  # Pin the backend to the fixture, so the absent-backlog path is decided here
+  # and not by whatever tasks-axi configuration the host happens to carry.
+  cp "$ROOT/.tasks.toml" "$home/.tasks.toml"
   fakebin=$(fm_fakebin "$home")
   fm_fake_exit0 "$fakebin" tmux treehouse no-mistakes gh gh-axi
   printf '%s\n' "$home"
