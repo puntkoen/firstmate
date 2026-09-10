@@ -9,6 +9,12 @@
 # auto-approves), and only as a clean fast-forward - it refuses a diverged branch
 # and tells you to have the crewmate rebase. See AGENTS.md prime directives,
 # project management, and task lifecycle.
+#
+# The working-tree guard is split by what a fast-forward can actually destroy.
+# Modified or staged TRACKED files always refuse. Untracked files refuse only
+# when the incoming range puts a file at one of their paths, so a scratch
+# directory the captain keeps on purpose no longer blocks an unrelated landing.
+#
 # The task's existing per-task control lock serializes the captain-hold check
 # through that fast-forward. A still-held or unreadable row refuses before the
 # merge, so a captain approval must be recorded as an `answer --release` before
@@ -95,12 +101,14 @@ git -C "$PROJ" rev-parse --verify --quiet "refs/heads/$BRANCH" >/dev/null || { e
 
 DEFAULT=$(default_branch) || { echo "error: cannot determine default branch for $PROJ; expected origin/HEAD, main, or master" >&2; exit 1; }
 
-# The project's main checkout must be on its default branch and clean, so the
-# fast-forward lands predictably (firstmate never writes here otherwise).
+# The project's main checkout must be on its default branch, and its TRACKED
+# files must be clean, so the fast-forward lands predictably (firstmate never
+# writes here otherwise). Untracked files are deliberately not counted here:
+# see the collision check below.
 cur=$(git -C "$PROJ" symbolic-ref --short HEAD 2>/dev/null || echo "")
 [ "$cur" = "$DEFAULT" ] || { echo "error: $PROJ is on '$cur', expected default branch '$DEFAULT'; cannot merge safely" >&2; exit 1; }
-if [ -n "$(git -C "$PROJ" status --porcelain 2>/dev/null | head -1)" ]; then
-  echo "error: $PROJ has a dirty working tree; refusing to merge into it" >&2
+if [ -n "$(git -C "$PROJ" status --porcelain --untracked-files=no 2>/dev/null | head -1)" ]; then
+  echo "error: $PROJ has modified or staged tracked files; refusing to merge into it" >&2
   exit 1
 fi
 
@@ -108,6 +116,22 @@ fi
 if ! git -C "$PROJ" merge-base --is-ancestor "$DEFAULT" "$BRANCH"; then
   echo "REFUSED: $BRANCH is not a fast-forward of $DEFAULT (it has diverged)." >&2
   echo "Have the crewmate rebase $BRANCH onto $DEFAULT, then retry." >&2
+  exit 1
+fi
+
+# An untracked file survives a fast-forward untouched unless the incoming range
+# puts a file at exactly its path, so an unrelated untracked directory (a local
+# database dump, a scratch folder the captain keeps on purpose) must not block
+# the landing. Git's own two-tree merge check is the authority on that
+# collision; ask it in dry-run form (-n keeps the index and working tree
+# untouched) rather than reimplementing the path comparison here. It runs after
+# the ancestor check because a two-tree merge only describes a fast-forward.
+tree_check_status=0
+tree_check=$(git -C "$PROJ" read-tree -n -u -m "$DEFAULT" "$BRANCH" 2>&1) || tree_check_status=$?
+if [ "$tree_check_status" -ne 0 ]; then
+  echo "REFUSED: merging $BRANCH into $DEFAULT would overwrite work in $PROJ:" >&2
+  [ -z "$tree_check" ] || printf '%s\n' "$tree_check" >&2
+  echo "Move or remove the named path, then retry." >&2
   exit 1
 fi
 
