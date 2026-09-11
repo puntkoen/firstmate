@@ -1,0 +1,10 @@
+$ bin/fm-session-view.sh | grep -A1 "pr-review-ready"
+  service waiting on pr-review-ready         /private/tmp/fm-overview-demo.mslsWy/home          2m            
+  FM_HOME=/private/tmp/fm-overview-demo.mslsWy/home bin/fm-procevent.sh retire pr-review-ready
+
+# paste the close command the overview printed, verbatim:
+$ FM_HOME=/private/tmp/fm-overview-demo.mslsWy/home bin/fm-procevent.sh retire pr-review-ready
+retired: pr-review-ready
+
+$ bin/fm-session-view.sh | grep -i "pr-review-ready"   # gone from the overview
+(no match - the listener is no longer running)

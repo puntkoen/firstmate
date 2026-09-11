@@ -1,0 +1,11 @@
+# The one judgement that depends on real harness behaviour, checked against the
+# harnesses installed on this machine and against the captain, his own live home.
+$ FM_SESSION_ROLE_DRIFT=1 FM_SESSION_ROLE_HOME=~/Projects/firstmate tests/fm-session-inventory-live-e2e.test.sh
+# claude 2.1.236 (Claude Code): sessions=1 lock_owner=single argv=[/opt/homebrew/bin/claude]
+ok - live session: a working claude 2.1.236 (Claude Code) process is reported as this home's session
+# codex codex-cli 0.147.0: sessions=1 lock_owner=single argv=[/opt/homebrew/bin/codex]
+ok - live session: a working codex codex-cli 0.147.0 process is reported as this home's session
+# unverified on this machine (not installed): opencode pi pi-signed omp grok kimi cursor rovo muse
+# harness 3250: 1 session(s) in this home, 0 running this home's workers, 3 elsewhere, 4 under the harness, lock_owner=single
+ok - live session: every harness process under this home lock-owning harness is accounted for
+# checked 2 installed harness(es)

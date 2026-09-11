@@ -1,0 +1,29 @@
+<!doctype html><meta charset="utf-8">
+<style>
+ body { margin:0; background:#12141a; font-family:"SF Mono","JetBrains Mono",Menlo,monospace; }
+ .pane { width:120ch; margin:0; background:#1b1e26; border-radius:10px; overflow:hidden;
+          box-shadow:0 18px 50px rgba(0,0,0,.55); }
+ .bar { background:#2a2e38; color:#cdd3de; font-size:12px; padding:7px 12px; letter-spacing:.02em; }
+ .bar b { color:#fff; font-weight:600; }
+ pre { margin:0; padding:14px 16px; color:#d7dbe3; font-size:13px; line-height:1.45;
+        white-space:pre; overflow:visible; }
+</style>
+<div style="display:inline-block;padding:26px">
+<div class="pane"><div class="bar"><b>WezTerm</b> — session start - unasked notice — 120 cols</div>
+<pre># What a session start says, unasked, in a home with old work in it.
+$ bin/fm-bootstrap.sh          # session-start digest (detect-only half)
+SESSIONS_STALE: worker webshop-checkout - 14d, alpha - close: FM_HOME=/private/tmp/fm-overview-demo.mslsWy/home bin/fm-t
+eardown.sh webshop-checkout (confirm: blocked, so it can still be holding unlanded work)
+SESSIONS_STALE: review page plan.html - 9d, /tmp/fm-overview-demo.mslsWy/pages/bloomandhuda-webshop - close: lavish-axi 
+end /tmp/fm-overview-demo.mslsWy/pages/bloomandhuda-webshop/plan.html
+SESSIONS_STALE: worker boekhouding-import - 6d, alpha - close: FM_HOME=/private/tmp/fm-overview-demo.mslsWy/home bin/fm-
+teardown.sh boekhouding-import
+SESSIONS_STALE: review page stand.html - 4d, /tmp/fm-overview-demo.mslsWy/pages/boekhouding - close: lavish-axi end /tmp
+/fm-overview-demo.mslsWy/pages/boekhouding/stand.html (confirm: 2 queued note(s) from the captain would be lost)
+
+# Four lines, no report. The 21-day facturen-export is deliberately held by
+# the captain, so it stays in the overview and out of this notice.
+
+# And the same home once nothing is over the threshold:
+$ FM_SESSION_STALE_DAYS=60 bin/fm-bootstrap.sh | grep SESSIONS_STALE
+(nothing - silence means nothing is old)</pre></div></div>

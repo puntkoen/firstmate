@@ -1,0 +1,13 @@
+# What a session start says, unasked, in a home with old work in it.
+$ bin/fm-bootstrap.sh          # session-start digest (detect-only half)
+SESSIONS_STALE: worker webshop-checkout - 14d, alpha - close: FM_HOME=/private/tmp/fm-overview-demo.mslsWy/home bin/fm-teardown.sh webshop-checkout (confirm: blocked, so it can still be holding unlanded work)
+SESSIONS_STALE: review page plan.html - 9d, /tmp/fm-overview-demo.mslsWy/pages/bloomandhuda-webshop - close: lavish-axi end /tmp/fm-overview-demo.mslsWy/pages/bloomandhuda-webshop/plan.html
+SESSIONS_STALE: worker boekhouding-import - 6d, alpha - close: FM_HOME=/private/tmp/fm-overview-demo.mslsWy/home bin/fm-teardown.sh boekhouding-import
+SESSIONS_STALE: review page stand.html - 4d, /tmp/fm-overview-demo.mslsWy/pages/boekhouding - close: lavish-axi end /tmp/fm-overview-demo.mslsWy/pages/boekhouding/stand.html (confirm: 2 queued note(s) from the captain would be lost)
+
+# Four lines, no report. The 21-day facturen-export is deliberately held by
+# the captain, so it stays in the overview and out of this notice.
+
+# And the same home once nothing is over the threshold:
+$ FM_SESSION_STALE_DAYS=60 bin/fm-bootstrap.sh | grep SESSIONS_STALE
+(nothing - silence means nothing is old)

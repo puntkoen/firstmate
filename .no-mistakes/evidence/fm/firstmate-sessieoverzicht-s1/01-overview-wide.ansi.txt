@@ -1,0 +1,33 @@
+[1mSessions - /private/tmp/fm-overview-demo.mslsWy/home[0m
+[2m2026-09-06T12:00:00Z - 12 running, 5 over 3 days[0m
+[2mone background session drives this home[0m
+
+[1m  KIND    WHAT                               BELONGS TO                                         AGE     TASK  [0m
+[31m![0m worker  facturen-export (ship, held)       alpha                                              21d     21d   
+[31m![0m worker  webshop-checkout (ship)            alpha                                              14d     14d   
+[31m![0m worker  boekhouding-import (ship)          alpha                                              6d      6d    
+  worker  sessie-overzicht (ship)            alpha                                              12h     0d    
+  harness 23088 live session                 harness 23088                                      1m            
+[31m![0m review  plan.html                          …-overview-demo.mslsWy/pages/bloomandhuda-webshop  9d            
+[31m![0m review  stand.html                         /tmp/fm-overview-demo.mslsWy/pages/boekhouding     4d            
+  review  cheatsheet.html                    /tmp/fm-overview-demo.mslsWy/pages/sqills          2h            
+  service validation service                 shared on this machine                             1d            
+  service review page server                 shared on this machine                             7h            
+  service waiting on pr-review-ready         /private/tmp/fm-overview-demo.mslsWy/home          1m            
+  service fleet monitoring                   /private/tmp/fm-overview-demo.mslsWy/home          1m            
+
+[1mTo close[0m
+  FM_HOME=/private/tmp/fm-overview-demo.mslsWy/home bin/fm-teardown.sh facturen-export
+      [2mconfirm: its state could not be read, so what it still holds is unknown[0m
+  FM_HOME=/private/tmp/fm-overview-demo.mslsWy/home bin/fm-teardown.sh webshop-checkout
+      [2mconfirm: blocked, so it can still be holding unlanded work[0m
+  FM_HOME=/private/tmp/fm-overview-demo.mslsWy/home bin/fm-teardown.sh boekhouding-import
+  FM_HOME=/private/tmp/fm-overview-demo.mslsWy/home bin/fm-teardown.sh sessie-overzicht
+      [2mconfirm: its state could not be read, so what it still holds is unknown[0m
+  kill 23088
+      [2mconfirm: a live session: closing it can lose an unfinished turn[0m
+  lavish-axi end /tmp/fm-overview-demo.mslsWy/pages/bloomandhuda-webshop/plan.html
+  lavish-axi end /tmp/fm-overview-demo.mslsWy/pages/boekhouding/stand.html
+      [2mconfirm: 2 queued note(s) from the captain would be lost[0m
+  lavish-axi end /tmp/fm-overview-demo.mslsWy/pages/sqills/cheatsheet.html
+  FM_HOME=/private/tmp/fm-overview-demo.mslsWy/home bin/fm-procevent.sh retire pr-review-ready
