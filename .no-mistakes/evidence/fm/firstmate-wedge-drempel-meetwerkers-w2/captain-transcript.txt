@@ -1,0 +1,77 @@
+2026-09-20 replay: de meldingen die de kapitein daadwerkelijk te zien krijgt
+=============================================================================
+
+Taak      : bloomandhuda-kern-en-plugins-bijwerken-u6 (WordPress-plugins bijwerken
+            via een Docker-container; enkele commandos duren 10-25 minuten)
+Scenario  : een turn die al 5 uur openstaat, geen enkele afgeronde turn,
+            een busy pane, en in ronde 6 een echte storing (stroomuitval).
+Uitvoering: de ECHTE bin/fm-spawn.sh, de ECHTE hook-commandos die die installeert,
+            de ECHTE bin/fm-busy-event.sh, bin/fm-watch.sh en bin/fm-wake-drain.sh.
+            Alleen de tmux-pane en de crew-state-probe zijn nagebootst.
+Harness   : replay-harness.sh <checkout> <label>
+
+VOOR  = basis-commit 631bc26d (de code van 20-09-2026)
+NA    = deze branch,  commit 24a48dfe
+
+#############################################################################
+=== [VOOR] 1. Wat fm-spawn in de Claude-worktree installeert ===
+hook-events in .claude/settings.local.json:
+  - SessionEnd
+  - Stop
+  - StopFailure
+  - UserPromptSubmit
+  (geen tool-grens-hook: de bewaking krijgt binnen een turn geen enkel activiteitssignaal)
+
+=== [VOOR] 2. Vijf polls terwijl de werker gewoon bezig is ===
+pane toont een lopende docker/wp plugin-update; turn staat 5 uur open; geen afgeronde turn.
+  ronde 1 (geen tool-grens bekend)   (stil: geen melding, geen wake-rij, maar wel op de wedge-timer)
+  ronde 2 (geen tool-grens bekend)   WAKKER GEMAAKT -> stale: firstmate:fm-bloomandhuda-kern-en-plugins-bijwerken-u6 (idle 501s, possible wedge, escalation 1)
+  ronde 3 (geen tool-grens bekend)   (stil: geen melding, geen wake-rij, maar wel op de wedge-timer)
+  ronde 4 (geen tool-grens bekend)   WAKKER GEMAAKT -> stale: firstmate:fm-bloomandhuda-kern-en-plugins-bijwerken-u6 (idle 501s, possible wedge, escalation 2)
+  ronde 5 (geen tool-grens bekend)   (stil: geen melding, geen wake-rij, maar wel op de wedge-timer)
+
+=== [VOOR] 3. Ronde 6: de stroom valt uit, de werker verliest zijn verbinding ===
+  echte storing                      WAKKER GEMAAKT -> stale: firstmate:fm-bloomandhuda-kern-en-plugins-bijwerken-u6 (idle 501s, possible wedge, escalation 3, demand-deep-inspection: same pane has wedge-escalated 3 times in a row - do not re-absorb on the run-step/pane state alone)
+
+  durabele wake-rij die de kapitein binnenkrijgt:
+    1789986380	3	stale	firstmate:fm-bloomandhuda-kern-en-plugins-bijwerken-u6	stale: firstmate:fm-bloomandhuda-kern-en-plugins-bijwerken-u6 (idle 501s, possible wedge, escalation 3, demand-deep-inspection: same pane has wedge-escalated 3 times in a row - do not re-absorb on the run-step/pane state alone)
+
+#############################################################################
+=== [NA] 1. Wat fm-spawn in de Claude-worktree installeert ===
+hook-events in .claude/settings.local.json:
+  - PostToolUse
+  - PreToolUse
+  - SessionEnd
+  - Stop
+  - StopFailure
+  - UserPromptSubmit
+  PreToolUse matcher : .*
+  PreToolUse command : '<repo>/bin/fm-busy-event.sh' progress '<state>' 'bloomandhuda-kern-en-plugins-bijwerken-u6' --gen 'g1789986384.34662.22410' >/dev/null 2>&1 || true
+
+=== [NA] 2. Vijf polls terwijl de werker gewoon bezig is ===
+pane toont een lopende docker/wp plugin-update; turn staat 5 uur open; geen afgeronde turn.
+  ronde 1 (laatste tool-grens 1500s) (stil: geen melding, geen wake-rij, geen wedge-timer)
+  ronde 2 (laatste tool-grens 1500s) (stil: geen melding, geen wake-rij, geen wedge-timer)
+  ronde 3 (laatste tool-grens 1500s) (stil: geen melding, geen wake-rij, geen wedge-timer)
+  ronde 4 (laatste tool-grens 1500s) (stil: geen melding, geen wake-rij, geen wedge-timer)
+  ronde 5 (laatste tool-grens 1500s) (stil: geen melding, geen wake-rij, geen wedge-timer)
+
+=== [NA] 3. Ronde 6: de stroom valt uit, de werker verliest zijn verbinding ===
+  echte storing                      WAKKER GEMAAKT -> stale: firstmate:fm-bloomandhuda-kern-en-plugins-bijwerken-u6 (idle 501s, possible wedge, escalation 1, the harness still reports an open turn and no tool-call boundary has been observed for 7200s)
+
+  durabele wake-rij die de kapitein binnenkrijgt:
+    1789986457	1	stale	firstmate:fm-bloomandhuda-kern-en-plugins-bijwerken-u6	stale: firstmate:fm-bloomandhuda-kern-en-plugins-bijwerken-u6 (idle 501s, possible wedge, escalation 1, the harness still reports an open turn and no tool-call boundary has been observed for 7200s)
+
+#############################################################################
+
+Wat hierboven te zien is
+------------------------
+VOOR: binnen zes polls drie valse escalaties, oplopend tot
+      "demand-deep-inspection: same pane has wedge-escalated 3 times in a row".
+      De ECHTE storing in ronde 6 komt binnen met exact dezelfde zin als de
+      valse alarmen ervoor - alleen de teller verschilt. Niet te onderscheiden.
+NA:   de vijf polls waarin de werker gewoon meet zijn stil - geen melding,
+      geen wake-rij, de pane komt niet eens op de wedge-timer terecht.
+      De echte storing in ronde 6 gaat wel af, EN benoemt nu welke marker
+      gemeten is en hoe oud die is ("no tool-call boundary has been observed
+      for 7200s"), zonder te beweren dat er niets draait.
