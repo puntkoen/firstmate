@@ -1,0 +1,163 @@
+firstmate-doorbell-vals-pending-p1 - end-to-end doorbell delivery through the REAL
+fm_task_inbox_ring() gate on a cursorless backend (zellij adapter: styled=1 cursor=0
+identity=0, the same read herdr/cmux/orca perform), against the claude 2.1.236 pane
+shape captured live on 2026-09-20. "base" loads the pre-fix bin/fm-composer-lib.sh
+from git 631bc26d; everything else in the stack is identical.
+
+################################################################
+# BEFORE THE FIX - the captain steers an idle claude worker
+# $ FM_ROOT=. bash doorbell-e2e-repro.sh base idle
+################################################################
+
+=== pane the worker is showing (composer row is between the two rules) ===
+> think about the galerij indeling
+  I'll restructure the gallery grid and relink the thumbnails.
+────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────
+  → bloomandhuda26 git:(g4)× | Opus 5 (1M context) | ctx [█░░░░░░] 15%
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+
+composer verdict for this pane (library: base) : pending
+
+fm-send: doorbell skipped (composer visibly holds pending text); the steer is durably recorded at <lab>/state/inbox/bloomandhuda-galerij-indeling-en-links-g4/0001.msg and the watcher will re-ring
+
+=== what the worker actually received (submitted lines) ===
+(nothing - the captain's instruction never reached the worker)
+
+=== pane after the doorbell attempt ===
+> think about the galerij indeling
+  I'll restructure the gallery grid and relink the thumbnails.
+────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────
+  → bloomandhuda26 git:(g4)× | Opus 5 (1M context) | ctx [█░░░░░░] 15%
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+
+################################################################
+# AFTER THE FIX - the same pane, the same steer
+# $ FM_ROOT=. bash doorbell-e2e-repro.sh fixed idle
+################################################################
+
+=== pane the worker is showing (composer row is between the two rules) ===
+> think about the galerij indeling
+  I'll restructure the gallery grid and relink the thumbnails.
+────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────
+  → bloomandhuda26 git:(g4)× | Opus 5 (1M context) | ctx [█░░░░░░] 15%
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+
+composer verdict for this pane (library: fixed) : empty
+
+fm-send: doorbell rang
+
+=== what the worker actually received (submitted lines) ===
+: Firstmate instruction waiting: list '<lab>/state/inbox/bloomandhuda-galerij-indeling-en-links-g4'/*.msg and, in numeric order, read and act on each, then mv each handled file to '<lab>/state/inbox/bloomandhuda-galerij-indeling-en-links-g4'/handled/.
+
+=== pane after the doorbell attempt ===
+> think about the galerij indeling
+  I'll restructure the gallery grid and relink the thumbnails.
+────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────
+  → bloomandhuda26 git:(g4)× | Opus 5 (1M context) | ctx [█░░░░░░] 15%
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+
+################################################################
+# AFTER THE FIX - safety direction: the worker has a real half-typed draft
+# $ FM_ROOT=. bash doorbell-e2e-repro.sh fixed typed
+################################################################
+
+=== pane the worker is showing (composer row is between the two rules) ===
+> think about the galerij indeling
+  I'll restructure the gallery grid and relink the thumbnails.
+────────────────────────────────────────────────────────────
+❯ fix the login bug
+────────────────────────────────────────────────────────────
+  → bloomandhuda26 git:(g4)× | Opus 5 (1M context) | ctx [█░░░░░░] 15%
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+
+composer verdict for this pane (library: fixed) : pending
+
+fm-send: doorbell skipped (composer visibly holds pending text); the steer is durably recorded at <lab>/state/inbox/bloomandhuda-galerij-indeling-en-links-g4/0001.msg and the watcher will re-ring
+
+=== what the worker actually received (submitted lines) ===
+(nothing - the captain's instruction never reached the worker)
+
+=== pane after the doorbell attempt ===
+> think about the galerij indeling
+  I'll restructure the gallery grid and relink the thumbnails.
+────────────────────────────────────────────────────────────
+❯ fix the login bug
+────────────────────────────────────────────────────────────
+  → bloomandhuda26 git:(g4)× | Opus 5 (1M context) | ctx [█░░░░░░] 15%
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+
+################################################################
+# AFTER THE FIX - safety direction: the stray SGR mouse report left by a click in the pane
+# $ FM_ROOT=. bash doorbell-e2e-repro.sh fixed mouse
+################################################################
+
+=== pane the worker is showing (composer row is between the two rules) ===
+> think about the galerij indeling
+  I'll restructure the gallery grid and relink the thumbnails.
+────────────────────────────────────────────────────────────
+❯ <65;77;27M
+────────────────────────────────────────────────────────────
+  → bloomandhuda26 git:(g4)× | Opus 5 (1M context) | ctx [█░░░░░░] 15%
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+
+composer verdict for this pane (library: fixed) : pending
+
+fm-send: doorbell skipped (composer visibly holds pending text); the steer is durably recorded at <lab>/state/inbox/bloomandhuda-galerij-indeling-en-links-g4/0001.msg and the watcher will re-ring
+
+=== what the worker actually received (submitted lines) ===
+(nothing - the captain's instruction never reached the worker)
+
+=== pane after the doorbell attempt ===
+> think about the galerij indeling
+  I'll restructure the gallery grid and relink the thumbnails.
+────────────────────────────────────────────────────────────
+❯ <65;77;27M
+────────────────────────────────────────────────────────────
+  → bloomandhuda26 git:(g4)× | Opus 5 (1M context) | ctx [█░░░░░░] 15%
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+
+################################################################
+# BEFORE THE FIX - the other shape claude draws (bordered composer), same footer
+# $ FM_ROOT=. bash doorbell-e2e-repro.sh base box
+################################################################
+
+=== pane the worker is showing (composer row is between the two rules) ===
+> think about de galerij indeling
+  I'll restructure the gallery grid and relink the thumbnails.
+╭──────────────────────────────────────────────────────────╮
+│ ❯                                                        │
+╰──────────────────────────────────────────────────────────╯
+  → bloomandhuda26 git:(g4)× | Opus 5 (1M context) | ctx [█░░░░░░] 15%
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+
+composer verdict for this pane (library: base) : pending
+
+(verdict-only run: that verdict IS the doorbell gate - fm_task_inbox_ring
+ defers on exactly `pending` and rings on anything else.)
+
+################################################################
+# AFTER THE FIX - the bordered composer under the same footer
+# $ FM_ROOT=. bash doorbell-e2e-repro.sh fixed box
+################################################################
+
+=== pane the worker is showing (composer row is between the two rules) ===
+> think about de galerij indeling
+  I'll restructure the gallery grid and relink the thumbnails.
+╭──────────────────────────────────────────────────────────╮
+│ ❯                                                        │
+╰──────────────────────────────────────────────────────────╯
+  → bloomandhuda26 git:(g4)× | Opus 5 (1M context) | ctx [█░░░░░░] 15%
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+
+composer verdict for this pane (library: fixed) : empty
+
+(verdict-only run: that verdict IS the doorbell gate - fm_task_inbox_ring
+ defers on exactly `pending` and rings on anything else.)
